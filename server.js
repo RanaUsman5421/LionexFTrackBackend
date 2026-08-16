@@ -4,6 +4,7 @@ const cors = require('cors');
 const dotenv = require('dotenv');
 const connectDB = require('./src/config/db');
 const authRoutes = require('./src/routes/authRoutes');
+const appDataRoutes = require('./src/routes/appDataRoutes');
 const locationRoutes = require('./src/routes/locationRoutes');
 const trackingRoutes = require('./src/routes/trackingRoutes');
 const { initializeSocket } = require('./src/services/socketService');
@@ -38,6 +39,7 @@ app.get('/api/health', (req, res) => {
 });
 
 app.use('/api/auth', authRoutes);
+app.use('/api/app-data', appDataRoutes);
 app.use('/api/locations', locationRoutes);
 app.use('/api/tracking', trackingRoutes);
 
