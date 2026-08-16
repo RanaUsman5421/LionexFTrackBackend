@@ -26,6 +26,7 @@ const employeeCurrentLocationSchema = new mongoose.Schema(
     altitude: { type: Number, default: null },
     batteryPercentage: { type: Number, default: null },
     timestamp: { type: Date, required: true },
+    lastSeenAt: { type: Date, default: null },
     trackingStatus: {
       type: String,
       enum: ['ACTIVE', 'STALE', 'OFFLINE', 'GPS_DISABLED', 'TRACKING_STOPPED'],

@@ -1,11 +1,15 @@
 const {
   canAccessEmployee,
+  createTrackingSession,
   getCurrentLocationForEmployee,
   getCurrentLocations,
   getLocationHistory,
   storeHistoryLocation,
+  touchCurrentLocation,
+  touchTrackingSession,
   upsertCurrentLocationIfNewer,
   validateLocationPayload,
+  validateHeartbeatPayload,
 } = require('../services/locationService');
 const { emitLocationUpdate } = require('../services/socketService');
 
@@ -21,6 +25,7 @@ const serializeCurrent = (doc) => {
     altitude: doc.altitude,
     batteryPercentage: doc.batteryPercentage,
     timestamp: doc.timestamp,
+    lastSeenAt: doc.lastSeenAt,
     trackingStatus: doc.trackingStatus,
     sessionStatus: doc.sessionStatus,
     updatedAt: doc.updatedAt,
@@ -37,6 +42,9 @@ const formatPayload = (employeeId, locationDoc) => ({
   altitude: locationDoc.altitude,
   batteryPercentage: locationDoc.batteryPercentage,
   timestamp: locationDoc.timestamp,
+  lastSeenAt: locationDoc.lastSeenAt || locationDoc.timestamp,
+  trackingStatus: locationDoc.trackingStatus,
+  sessionStatus: locationDoc.sessionStatus,
 });
 
 const submitLocation = async (req, res) => {
@@ -53,6 +61,7 @@ const submitLocation = async (req, res) => {
     const employeeId = req.user.employeeId;
     const historyDoc = await storeHistoryLocation(employeeId, validated.data);
     const currentDoc = await upsertCurrentLocationIfNewer(employeeId, validated.data, 'active');
+    await touchTrackingSession(employeeId, validated.data.timestamp);
 
     if (currentDoc && currentDoc.timestamp && currentDoc.timestamp.getTime() === validated.data.timestamp.getTime()) {
       emitLocationUpdate(formatPayload(employeeId, currentDoc));
@@ -94,6 +103,7 @@ const submitLocationBulk = async (req, res) => {
 
       const historyDoc = await storeHistoryLocation(employeeId, data);
       const currentDoc = await upsertCurrentLocationIfNewer(employeeId, data, 'active');
+      await touchTrackingSession(employeeId, data.timestamp);
       processed.push(data.clientLocationId);
 
       if (historyDoc && currentDoc && currentDoc.timestamp.getTime() === data.timestamp.getTime()) {
@@ -107,6 +117,9 @@ const submitLocationBulk = async (req, res) => {
           altitude: currentDoc.altitude,
           batteryPercentage: currentDoc.batteryPercentage,
           timestamp: currentDoc.timestamp,
+          lastSeenAt: currentDoc.lastSeenAt,
+          trackingStatus: currentDoc.trackingStatus,
+          sessionStatus: currentDoc.sessionStatus,
         });
       }
     }
@@ -181,9 +194,49 @@ const getHistoryController = async (req, res) => {
   }
 };
 
+const heartbeatLocation = async (req, res) => {
+  try {
+    const validated = validateHeartbeatPayload(req.body || {});
+    if (!validated.valid) {
+      return res.status(400).json({ success: false, message: validated.message });
+    }
+
+    const employeeId = req.user.employeeId;
+    const currentDoc = await touchCurrentLocation(employeeId, validated.data, 'active');
+    const session = (await touchTrackingSession(employeeId, validated.data.timestamp)) || await createTrackingSession(employeeId, validated.data);
+
+    if (currentDoc) {
+      emitLocationUpdate({
+        employeeId,
+        latitude: currentDoc.location.coordinates[1],
+        longitude: currentDoc.location.coordinates[0],
+        accuracy: currentDoc.accuracy,
+        speed: currentDoc.speed,
+        heading: currentDoc.heading,
+        altitude: currentDoc.altitude,
+        batteryPercentage: currentDoc.batteryPercentage,
+        timestamp: currentDoc.timestamp,
+        lastSeenAt: currentDoc.lastSeenAt,
+        trackingStatus: currentDoc.trackingStatus,
+        sessionStatus: currentDoc.sessionStatus,
+      });
+    }
+
+    return res.status(200).json({
+      success: true,
+      message: 'Heartbeat recorded.',
+      current: serializeCurrent(currentDoc),
+      session,
+    });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: error.message || 'Failed to record heartbeat.' });
+  }
+};
+
 module.exports = {
   submitLocation,
   submitLocationBulk,
   getCurrentLocationsController,
   getHistoryController,
+  heartbeatLocation,
 };

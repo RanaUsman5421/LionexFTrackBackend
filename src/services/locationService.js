@@ -55,6 +55,44 @@ const validateLocationPayload = (payload) => {
   };
 };
 
+const validateHeartbeatPayload = (payload) => {
+  const latitude = Number(payload.latitude);
+  const longitude = Number(payload.longitude);
+  const accuracy = payload.accuracy === undefined || payload.accuracy === null ? null : Number(payload.accuracy);
+  const timestamp = normalizeTimestamp(payload.timestamp);
+
+  if (!Number.isFinite(latitude) || latitude < -90 || latitude > 90) {
+    return { valid: false, message: 'Invalid latitude.' };
+  }
+
+  if (!Number.isFinite(longitude) || longitude < -180 || longitude > 180) {
+    return { valid: false, message: 'Invalid longitude.' };
+  }
+
+  if (!timestamp) {
+    return { valid: false, message: 'Invalid timestamp.' };
+  }
+
+  if (accuracy !== null && (!Number.isFinite(accuracy) || accuracy < 0 || accuracy > MAX_ACCURACY_METERS)) {
+    return { valid: false, message: 'Invalid accuracy value.' };
+  }
+
+  return {
+    valid: true,
+    data: {
+      latitude,
+      longitude,
+      accuracy,
+      speed: payload.speed === undefined || payload.speed === null ? null : Number(payload.speed),
+      heading: payload.heading === undefined || payload.heading === null ? null : Number(payload.heading),
+      altitude: payload.altitude === undefined || payload.altitude === null ? null : Number(payload.altitude),
+      timestamp,
+      batteryPercentage: payload.batteryPercentage === undefined || payload.batteryPercentage === null ? null : Number(payload.batteryPercentage),
+      networkType: String(payload.networkType || ''),
+    },
+  };
+};
+
 const buildHistoryDocument = (employeeId, location) => ({
   employeeId,
   clientLocationId: location.clientLocationId,
@@ -83,6 +121,7 @@ const buildCurrentDocument = (employeeId, location, sessionStatus = 'active') =>
   altitude: location.altitude,
   batteryPercentage: location.batteryPercentage,
   timestamp: location.timestamp,
+  lastSeenAt: location.timestamp,
   trackingStatus: sessionStatus === 'stopped' ? 'TRACKING_STOPPED' : 'ACTIVE',
   sessionStatus,
 });
@@ -96,6 +135,51 @@ const upsertCurrentLocationIfNewer = async (employeeId, location, sessionStatus 
   return EmployeeCurrentLocation.findOneAndUpdate(
     { employeeId },
     buildCurrentDocument(employeeId, location, sessionStatus),
+    { upsert: true, new: true, setDefaultsOnInsert: true }
+  );
+};
+
+const touchCurrentLocation = async (employeeId, location, sessionStatus = 'active') => {
+  const existing = await EmployeeCurrentLocation.findOne({ employeeId });
+  const lastSeenAt = location.timestamp;
+  if (existing && existing.lastSeenAt && existing.lastSeenAt >= lastSeenAt) {
+    return existing;
+  }
+
+  const update = {
+    lastSeenAt,
+    trackingStatus: sessionStatus === 'stopped' ? 'TRACKING_STOPPED' : 'ACTIVE',
+    sessionStatus,
+  };
+
+  if (existing) {
+    if (Number.isFinite(location.accuracy)) update.accuracy = location.accuracy;
+    if (Number.isFinite(location.speed)) update.speed = location.speed;
+    if (Number.isFinite(location.heading)) update.heading = location.heading;
+    if (Number.isFinite(location.altitude)) update.altitude = location.altitude;
+    if (Number.isFinite(location.batteryPercentage)) update.batteryPercentage = location.batteryPercentage;
+    if (Number.isFinite(location.latitude) && Number.isFinite(location.longitude)) {
+      update.location = {
+        type: 'Point',
+        coordinates: [location.longitude, location.latitude],
+      };
+    }
+
+    return EmployeeCurrentLocation.findOneAndUpdate(
+      { employeeId },
+      { $set: update },
+      { new: true }
+    );
+  }
+
+  return EmployeeCurrentLocation.findOneAndUpdate(
+    { employeeId },
+    {
+      $set: {
+        ...buildCurrentDocument(employeeId, location, sessionStatus),
+        lastSeenAt,
+      },
+    },
     { upsert: true, new: true, setDefaultsOnInsert: true }
   );
 };
@@ -120,6 +204,7 @@ const createTrackingSession = async (employeeId, location) => {
   return TrackingSession.create({
     employeeId,
     startedAt: location.timestamp,
+    lastHeartbeatAt: location.timestamp,
     startLocation: {
       latitude: location.latitude,
       longitude: location.longitude,
@@ -128,11 +213,20 @@ const createTrackingSession = async (employeeId, location) => {
   });
 };
 
+const touchTrackingSession = async (employeeId, timestamp = new Date()) => {
+  return TrackingSession.findOneAndUpdate(
+    { employeeId, status: 'active' },
+    { $set: { lastHeartbeatAt: timestamp } },
+    { sort: { startedAt: -1 }, new: true }
+  );
+};
+
 const stopTrackingSession = async (employeeId, location) => {
   return TrackingSession.findOneAndUpdate(
     { employeeId, status: 'active' },
     {
       endedAt: location?.timestamp || new Date(),
+      lastHeartbeatAt: location?.timestamp || new Date(),
       status: 'stopped',
       endLocation: location
         ? { latitude: location.latitude, longitude: location.longitude }
@@ -160,7 +254,7 @@ const getLocationHistory = async (employeeId, { from, to, limit = 100 }) => {
 
   return LocationHistory.find(query)
     .sort({ timestamp: 1 })
-    .limit(Math.min(Number(limit) || 100, 500))
+    .limit(Math.min(Number(limit) || 100, 20000))
     .lean();
 };
 
@@ -168,10 +262,13 @@ module.exports = {
   isManagerOrAdmin,
   canAccessEmployee,
   validateLocationPayload,
+  validateHeartbeatPayload,
   normalizeTimestamp,
   upsertCurrentLocationIfNewer,
+  touchCurrentLocation,
   storeHistoryLocation,
   createTrackingSession,
+  touchTrackingSession,
   stopTrackingSession,
   getCurrentLocationForEmployee,
   getCurrentLocations,

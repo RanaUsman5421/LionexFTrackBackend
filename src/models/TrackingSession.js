@@ -10,6 +10,7 @@ const trackingSessionSchema = new mongoose.Schema(
     },
     startedAt: { type: Date, required: true },
     endedAt: { type: Date, default: null },
+    lastHeartbeatAt: { type: Date, default: null },
     startLocation: {
       latitude: { type: Number, default: null },
       longitude: { type: Number, default: null },
