@@ -14,6 +14,8 @@ const sanitizeUser = (user) => ({
   role: user.role,
   department: user.department,
   joiningDate: user.joiningDate,
+  createdAt: user.createdAt,
+  updatedAt: user.updatedAt,
 });
 
 const signup = async (req, res) => {
