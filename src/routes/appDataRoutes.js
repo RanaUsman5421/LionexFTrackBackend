@@ -7,12 +7,14 @@ const {
   getLeadsController,
   getSnapshotController,
   getSummaryController,
+  uploadLeadPhotoController,
   syncSnapshot,
 } = require('../controllers/appDataController');
 
 const router = express.Router();
 
 router.post('/snapshot', protect, syncSnapshot);
+router.post('/upload-photo', protect, express.raw({ type: 'multipart/form-data', limit: '25mb' }), uploadLeadPhotoController);
 router.get('/snapshot/:employeeId', protect, getSnapshotController);
 router.get('/summary/:employeeId', protect, getSummaryController);
 router.get('/duty/:employeeId', protect, getDutyController);

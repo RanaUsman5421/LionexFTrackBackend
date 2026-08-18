@@ -8,6 +8,8 @@ const {
   getSummary,
   upsertSnapshot,
 } = require('../services/appDataService');
+const { parseMultipartFormData } = require('../utils/multipartParser');
+const { uploadLeadPhotoToCloudinary } = require('../services/cloudinaryService');
 
 const syncSnapshot = async (req, res) => {
   try {
@@ -107,6 +109,50 @@ const getActivityController = async (req, res) => {
   }
 };
 
+const uploadLeadPhotoController = async (req, res) => {
+  try {
+    const contentType = String(req.headers['content-type'] || '');
+    const body = Buffer.isBuffer(req.body) ? req.body : Buffer.from(req.body || '');
+
+    if (!contentType.toLowerCase().includes('multipart/form-data')) {
+      return res.status(400).json({ success: false, message: 'Multipart form data is required.' });
+    }
+
+    const { fields, files } = parseMultipartFormData(body, contentType);
+    const photo = files.photo || files.image || files.file;
+
+    if (!photo) {
+      return res.status(400).json({ success: false, message: 'Photo file is missing.' });
+    }
+
+    const employeeId = String(fields.employeeId || req.user.employeeId || '').trim();
+    const leadId = String(fields.leadId || '').trim() || `lead-${Date.now()}`;
+    const kind = String(fields.kind || 'lead-photo').trim();
+    const uploaded = await uploadLeadPhotoToCloudinary({
+      buffer: photo.buffer,
+      filename: photo.filename,
+      mimeType: photo.contentType,
+      employeeId,
+      leadId,
+      kind,
+    });
+
+    return res.status(200).json({
+      success: true,
+      message: 'Photo uploaded successfully.',
+      photoUrl: uploaded.secureUrl,
+      publicId: uploaded.publicId,
+      assetId: uploaded.assetId,
+      folder: uploaded.folder,
+      employeeId,
+      leadId,
+      kind,
+    });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: error.message || 'Failed to upload photo.' });
+  }
+};
+
 module.exports = {
   syncSnapshot,
   getSnapshotController,
@@ -115,4 +161,5 @@ module.exports = {
   getLeadsController,
   getFollowUpsController,
   getActivityController,
+  uploadLeadPhotoController,
 };
