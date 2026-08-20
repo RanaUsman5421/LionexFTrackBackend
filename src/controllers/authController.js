@@ -14,6 +14,7 @@ const sanitizeUser = (user) => ({
   role: user.role,
   department: user.department,
   joiningDate: user.joiningDate,
+  profilePhotoUrl: user.profilePhotoUrl,
   createdAt: user.createdAt,
   updatedAt: user.updatedAt,
 });
@@ -33,6 +34,7 @@ const signup = async (req, res) => {
       role,
       department,
       joiningDate,
+      profilePhotoUrl,
     } = req.body;
 
     if (!fullName || !employeeId || !username || !email || !password) {
@@ -69,6 +71,7 @@ const signup = async (req, res) => {
       role: role || '',
       department: department || '',
       joiningDate: joiningDate || '',
+      profilePhotoUrl: profilePhotoUrl || null,
     });
 
     const token = generateToken(user);

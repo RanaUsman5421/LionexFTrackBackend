@@ -185,6 +185,7 @@ const appSnapshotSchema = new mongoose.Schema(
       role: { type: String, default: '' },
       department: { type: String, default: '' },
       joiningDate: { type: String, default: '' },
+      profilePhotoUrl: { type: String, default: null },
     },
     duty: { type: dutySchema, default: () => ({}) },
     tracking: { type: trackingSchema, default: () => ({}) },

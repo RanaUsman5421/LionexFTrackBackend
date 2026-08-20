@@ -8,6 +8,7 @@ const {
   getSnapshotController,
   getSummaryController,
   uploadLeadPhotoController,
+  uploadProfilePhotoController,
   syncSnapshot,
 } = require('../controllers/appDataController');
 
@@ -15,6 +16,7 @@ const router = express.Router();
 
 router.post('/snapshot', protect, syncSnapshot);
 router.post('/upload-photo', protect, express.raw({ type: 'multipart/form-data', limit: '25mb' }), uploadLeadPhotoController);
+router.post('/upload-profile-photo', protect, express.raw({ type: 'multipart/form-data', limit: '25mb' }), uploadProfilePhotoController);
 router.get('/snapshot/:employeeId', protect, getSnapshotController);
 router.get('/summary/:employeeId', protect, getSummaryController);
 router.get('/duty/:employeeId', protect, getDutyController);

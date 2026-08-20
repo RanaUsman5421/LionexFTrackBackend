@@ -9,7 +9,9 @@ const {
   upsertSnapshot,
 } = require('../services/appDataService');
 const { parseMultipartFormData } = require('../utils/multipartParser');
-const { uploadLeadPhotoToCloudinary } = require('../services/cloudinaryService');
+const { uploadLeadPhotoToCloudinary, uploadProfilePhotoToCloudinary } = require('../services/cloudinaryService');
+const User = require('../models/User');
+const AppSnapshot = require('../models/AppSnapshot');
 
 const syncSnapshot = async (req, res) => {
   try {
@@ -153,6 +155,65 @@ const uploadLeadPhotoController = async (req, res) => {
   }
 };
 
+const uploadProfilePhotoController = async (req, res) => {
+  try {
+    const contentType = String(req.headers['content-type'] || '');
+    const body = Buffer.isBuffer(req.body) ? req.body : Buffer.from(req.body || '');
+
+    if (!contentType.toLowerCase().includes('multipart/form-data')) {
+      return res.status(400).json({ success: false, message: 'Multipart form data is required.' });
+    }
+
+    const { fields, files } = parseMultipartFormData(body, contentType);
+    const photo = files.photo || files.image || files.file;
+
+    if (!photo) {
+      return res.status(400).json({ success: false, message: 'Photo file is missing.' });
+    }
+
+    const employeeId = String(fields.employeeId || req.user.employeeId || '').trim();
+    if (!employeeId) {
+      return res.status(400).json({ success: false, message: 'Employee id is required.' });
+    }
+
+    const uploaded = await uploadProfilePhotoToCloudinary({
+      buffer: photo.buffer,
+      filename: photo.filename,
+      mimeType: photo.contentType,
+      employeeId,
+    });
+
+    await User.findOneAndUpdate(
+      { employeeId },
+      { $set: { profilePhotoUrl: uploaded.secureUrl } },
+      { new: true }
+    );
+
+    await AppSnapshot.findOneAndUpdate(
+      { employeeId },
+      {
+        $set: {
+          'user.profilePhotoUrl': uploaded.secureUrl,
+          lastSyncedAt: new Date(),
+        },
+      },
+      { upsert: true, new: true, setDefaultsOnInsert: true }
+    );
+
+    return res.status(200).json({
+      success: true,
+      message: 'Profile photo uploaded successfully.',
+      photoUrl: uploaded.secureUrl,
+      publicId: uploaded.publicId,
+      assetId: uploaded.assetId,
+      folder: uploaded.folder,
+      employeeId,
+    });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: error.message || 'Failed to upload profile photo.' });
+  }
+};
+
 module.exports = {
   syncSnapshot,
   getSnapshotController,
@@ -162,4 +223,5 @@ module.exports = {
   getFollowUpsController,
   getActivityController,
   uploadLeadPhotoController,
+  uploadProfilePhotoController,
 };

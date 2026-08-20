@@ -26,6 +26,36 @@ function buildSignature(params, apiSecret) {
 }
 
 async function uploadLeadPhotoToCloudinary({ buffer, filename, mimeType, employeeId, leadId, kind }) {
+  const safeEmployeeId = sanitizeSegment(employeeId, 'employee');
+  const safeLeadId = sanitizeSegment(leadId, 'lead');
+  const safeKind = sanitizeSegment(kind, 'lead-photo');
+  const folder = `lionexftrack/leads/${safeEmployeeId}/${safeLeadId}`;
+  const publicId = `${safeKind}-${Date.now()}`;
+
+  return uploadToCloudinary({
+    buffer,
+    filename,
+    mimeType,
+    folder,
+    publicId,
+  });
+}
+
+async function uploadProfilePhotoToCloudinary({ buffer, filename, mimeType, employeeId }) {
+  const safeEmployeeId = sanitizeSegment(employeeId, 'employee');
+  const folder = `lionexftrack/profiles/${safeEmployeeId}`;
+  const publicId = `profile-photo-${Date.now()}`;
+
+  return uploadToCloudinary({
+    buffer,
+    filename,
+    mimeType,
+    folder,
+    publicId,
+  });
+}
+
+async function uploadToCloudinary({ buffer, filename, mimeType, folder, publicId }) {
   ensureCloudinaryConfig();
 
   if (!Buffer.isBuffer(buffer) || buffer.length === 0) {
@@ -36,11 +66,6 @@ async function uploadLeadPhotoToCloudinary({ buffer, filename, mimeType, employe
   const apiKey = process.env.CLOUDINARY_API_KEY;
   const apiSecret = process.env.CLOUDINARY_API_SECRET;
   const timestamp = Math.floor(Date.now() / 1000);
-  const safeEmployeeId = sanitizeSegment(employeeId, 'employee');
-  const safeLeadId = sanitizeSegment(leadId, 'lead');
-  const safeKind = sanitizeSegment(kind, 'lead-photo');
-  const publicId = `${safeKind}-${Date.now()}`;
-  const folder = `lionexftrack/leads/${safeEmployeeId}/${safeLeadId}`;
 
   const uploadParams = {
     folder,
@@ -80,4 +105,5 @@ async function uploadLeadPhotoToCloudinary({ buffer, filename, mimeType, employe
 
 module.exports = {
   uploadLeadPhotoToCloudinary,
+  uploadProfilePhotoToCloudinary,
 };
