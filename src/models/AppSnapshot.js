@@ -160,6 +160,10 @@ const trackingSchema = new mongoose.Schema(
     currentAddress: { type: String, default: '' },
     trackingStatus: { type: String, default: 'Idle' },
     gpsAccuracy: { type: Number, default: 0 },
+    currentSpeedKmh: { type: Number, default: 0 },
+    currentHeading: { type: Number, default: 0 },
+    currentAltitudeMeters: { type: Number, default: 0 },
+    lastGpsUpdateMs: { type: Number, default: 0 },
     currentGps: {
       latitude: { type: Number, default: 0 },
       longitude: { type: Number, default: 0 },
