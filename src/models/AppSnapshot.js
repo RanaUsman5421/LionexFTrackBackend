@@ -114,6 +114,7 @@ const leadSchema = new mongoose.Schema(
     remarks: { type: String, default: '' },
     status: { type: String, default: '' },
     leadType: { type: String, default: '' },
+    sessionType: { type: String, default: '' },
     dailyVolume: { type: String, default: '' },
     weeklyVolume: { type: String, default: '' },
     monthlyVolume: { type: String, default: '' },
