@@ -12,6 +12,7 @@ const followUpSchema = new mongoose.Schema(
   {
     id: { type: String, required: true },
     leadId: { type: String, default: '' },
+    leadBrand: { type: String, default: '' },
     type: { type: String, default: '' },
     date: { type: String, default: '' },
     time: { type: String, default: '' },
@@ -195,6 +196,7 @@ const appSnapshotSchema = new mongoose.Schema(
     leadFormStep: { type: Number, default: 0 },
     leads: { type: [leadSchema], default: [] },
     followUps: { type: [followUpSchema], default: [] },
+    dismissedFollowUpReminderIds: { type: [String], default: [] },
     activityLog: { type: [activitySchema], default: [] },
     notifications: { type: [notificationSchema], default: [] },
     lastSyncedAt: { type: Date, default: null },

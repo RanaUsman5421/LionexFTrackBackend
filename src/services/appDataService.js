@@ -15,6 +15,9 @@ const ensureSnapshotShape = (payload = {}) => ({
   leadFormStep: Number(payload.leadFormStep || 0),
   leads: Array.isArray(payload.leads) ? payload.leads : [],
   followUps: Array.isArray(payload.followUps) ? payload.followUps : [],
+  dismissedFollowUpReminderIds: Array.isArray(payload.dismissedFollowUpReminderIds)
+    ? payload.dismissedFollowUpReminderIds
+    : [],
   activityLog: Array.isArray(payload.activityLog) ? payload.activityLog : [],
   notifications: Array.isArray(payload.notifications) ? payload.notifications : [],
   lastSyncedAt: payload.lastSyncedAt ? new Date(payload.lastSyncedAt) : new Date(),
