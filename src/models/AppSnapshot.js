@@ -18,6 +18,7 @@ const followUpSchema = new mongoose.Schema(
     time: { type: String, default: '' },
     notes: { type: String, default: '' },
     result: { type: String, default: 'Pending' },
+    closingRemarks: { type: String, default: '' },
     createdAtMs: { type: Number, default: Date.now },
   },
   { _id: false }
