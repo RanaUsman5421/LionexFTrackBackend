@@ -21,6 +21,7 @@ const protect = async (req, res, next) => {
     }
 
     req.user = principal;
+    req.principalType = user ? 'user' : 'admin';
     next();
   } catch (error) {
     return res.status(401).json({ success: false, message: 'Not authorized. Invalid token.' });

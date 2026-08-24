@@ -1,6 +1,6 @@
 const express = require('express');
 const { protect } = require('../middleware/authMiddleware');
-const { createAdmin, listUsers, loginAdmin } = require('../controllers/adminController');
+const { createAdmin, listUsers, loginAdmin, updateUser } = require('../controllers/adminController');
 
 const router = express.Router();
 
@@ -18,5 +18,6 @@ router.get('/create', methodHint('Admin creation'));
 router.post('/create', createAdmin);
 
 router.get('/users', protect, listUsers);
+router.put('/users/:userId', protect, updateUser);
 
 module.exports = router;
