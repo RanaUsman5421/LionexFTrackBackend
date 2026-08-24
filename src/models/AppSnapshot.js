@@ -198,6 +198,7 @@ const appSnapshotSchema = new mongoose.Schema(
     duty: { type: dutySchema, default: () => ({}) },
     tracking: { type: trackingSchema, default: () => ({}) },
     activeLeadSession: { type: leadSessionSchema, default: null },
+    activeSessionRoute: { type: String, default: null },
     leadFormDraft: { type: leadDraftSchema, default: () => ({}) },
     leadFormStep: { type: Number, default: 0 },
     leads: { type: [leadSchema], default: [] },

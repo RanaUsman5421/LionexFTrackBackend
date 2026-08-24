@@ -1,4 +1,5 @@
 const AppSnapshot = require('../models/AppSnapshot');
+const User = require('../models/User');
 
 const canAccessEmployee = (user, employeeId) => {
   const role = String(user?.role || '').toLowerCase();
@@ -11,6 +12,9 @@ const ensureSnapshotShape = (payload = {}) => ({
   duty: payload.duty || {},
   tracking: payload.tracking || {},
   activeLeadSession: payload.activeLeadSession?.id ? payload.activeLeadSession : null,
+  activeSessionRoute: payload.activeLeadSession?.id
+    ? String(payload.activeSessionRoute || '') || null
+    : null,
   leadFormDraft: payload.leadFormDraft || {},
   leadFormStep: Number(payload.leadFormStep || 0),
   leads: Array.isArray(payload.leads) ? payload.leads : [],
@@ -34,12 +38,31 @@ const upsertSnapshot = async (employeeId, payload) => {
 };
 
 const getSnapshot = async (employeeId) => {
-  const snapshot = await AppSnapshot.findOne({ employeeId }).lean();
+  const [snapshot, user] = await Promise.all([
+    AppSnapshot.findOne({ employeeId }).lean(),
+    User.findOne({ employeeId }).lean(),
+  ]);
   if (!snapshot) return null;
   const fallbackTimestamp = new Date(snapshot.updatedAt || snapshot.lastSyncedAt || 0).getTime();
+  const currentUser = user
+    ? {
+        name: user.fullName || snapshot.user?.name || '',
+        empId: user.employeeId || employeeId,
+        email: user.email || snapshot.user?.email || '',
+        phone: user.phone || '',
+        city: user.city || '',
+        area: user.area || '',
+        role: user.role || '',
+        department: user.department || '',
+        joiningDate: user.joiningDate || '',
+        profilePhotoUrl: user.profilePhotoUrl || snapshot.user?.profilePhotoUrl || null,
+      }
+    : snapshot.user || {};
   return {
     ...snapshot,
+    user: currentUser,
     activeLeadSession: snapshot.activeLeadSession?.id ? snapshot.activeLeadSession : null,
+    activeSessionRoute: snapshot.activeLeadSession?.id ? snapshot.activeSessionRoute || null : null,
     lastSyncedAtMs: Number(snapshot.lastSyncedAtMs || fallbackTimestamp || 0),
   };
 };
