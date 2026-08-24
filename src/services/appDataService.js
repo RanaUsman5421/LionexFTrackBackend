@@ -10,7 +10,7 @@ const ensureSnapshotShape = (payload = {}) => ({
   user: payload.user || {},
   duty: payload.duty || {},
   tracking: payload.tracking || {},
-  activeLeadSession: payload.activeLeadSession || {},
+  activeLeadSession: payload.activeLeadSession?.id ? payload.activeLeadSession : null,
   leadFormDraft: payload.leadFormDraft || {},
   leadFormStep: Number(payload.leadFormStep || 0),
   leads: Array.isArray(payload.leads) ? payload.leads : [],
@@ -39,6 +39,7 @@ const getSnapshot = async (employeeId) => {
   const fallbackTimestamp = new Date(snapshot.updatedAt || snapshot.lastSyncedAt || 0).getTime();
   return {
     ...snapshot,
+    activeLeadSession: snapshot.activeLeadSession?.id ? snapshot.activeLeadSession : null,
     lastSyncedAtMs: Number(snapshot.lastSyncedAtMs || fallbackTimestamp || 0),
   };
 };
