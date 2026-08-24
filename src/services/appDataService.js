@@ -20,6 +20,7 @@ const ensureSnapshotShape = (payload = {}) => ({
     : [],
   activityLog: Array.isArray(payload.activityLog) ? payload.activityLog : [],
   notifications: Array.isArray(payload.notifications) ? payload.notifications : [],
+  lastSyncedAtMs: Number(payload.lastSyncedAtMs || Date.now()),
   lastSyncedAt: payload.lastSyncedAt ? new Date(payload.lastSyncedAt) : new Date(),
 });
 
@@ -33,7 +34,13 @@ const upsertSnapshot = async (employeeId, payload) => {
 };
 
 const getSnapshot = async (employeeId) => {
-  return AppSnapshot.findOne({ employeeId }).lean();
+  const snapshot = await AppSnapshot.findOne({ employeeId }).lean();
+  if (!snapshot) return null;
+  const fallbackTimestamp = new Date(snapshot.updatedAt || snapshot.lastSyncedAt || 0).getTime();
+  return {
+    ...snapshot,
+    lastSyncedAtMs: Number(snapshot.lastSyncedAtMs || fallbackTimestamp || 0),
+  };
 };
 
 const getAllSnapshots = async () => {

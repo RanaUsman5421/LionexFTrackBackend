@@ -137,6 +137,7 @@ const leadSchema = new mongoose.Schema(
     timeline: { type: [String], default: [] },
     photoUrl: { type: String, default: null },
     createdAtMs: { type: Number, default: Date.now },
+    expiresAtMs: { type: Number, default: 0 },
     durationMinutes: { type: Number, default: 0 },
     draft: { type: Boolean, default: false },
   },
@@ -204,6 +205,7 @@ const appSnapshotSchema = new mongoose.Schema(
     dismissedFollowUpReminderIds: { type: [String], default: [] },
     activityLog: { type: [activitySchema], default: [] },
     notifications: { type: [notificationSchema], default: [] },
+    lastSyncedAtMs: { type: Number, default: 0 },
     lastSyncedAt: { type: Date, default: null },
   },
   { timestamps: true }
