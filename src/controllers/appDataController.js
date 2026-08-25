@@ -12,6 +12,7 @@ const { parseMultipartFormData } = require('../utils/multipartParser');
 const { uploadLeadPhotoToCloudinary, uploadProfilePhotoToCloudinary } = require('../services/cloudinaryService');
 const User = require('../models/User');
 const AppSnapshot = require('../models/AppSnapshot');
+const { emitAdminUserEvent } = require('../services/socketService');
 
 const syncSnapshot = async (req, res) => {
   try {
@@ -128,6 +129,9 @@ const uploadLeadPhotoController = async (req, res) => {
     }
 
     const employeeId = String(fields.employeeId || req.user.employeeId || '').trim();
+    if (!canAccessEmployee(req.user, employeeId)) {
+      return res.status(403).json({ success: false, message: 'Not authorized.' });
+    }
     const leadId = String(fields.leadId || '').trim() || `lead-${Date.now()}`;
     const kind = String(fields.kind || 'lead-photo').trim();
     const uploaded = await uploadLeadPhotoToCloudinary({
@@ -175,6 +179,9 @@ const uploadProfilePhotoController = async (req, res) => {
     if (!employeeId) {
       return res.status(400).json({ success: false, message: 'Employee id is required.' });
     }
+    if (!canAccessEmployee(req.user, employeeId)) {
+      return res.status(403).json({ success: false, message: 'Not authorized.' });
+    }
 
     const uploaded = await uploadProfilePhotoToCloudinary({
       buffer: photo.buffer,
@@ -183,7 +190,7 @@ const uploadProfilePhotoController = async (req, res) => {
       employeeId,
     });
 
-    await User.findOneAndUpdate(
+    const updatedUser = await User.findOneAndUpdate(
       { employeeId },
       { $set: { profilePhotoUrl: uploaded.secureUrl } },
       { new: true }
@@ -199,6 +206,15 @@ const uploadProfilePhotoController = async (req, res) => {
       },
       { upsert: true, new: true, setDefaultsOnInsert: true }
     );
+
+    if (updatedUser) {
+      emitAdminUserEvent('admin:user-updated', {
+        id: updatedUser._id.toString(),
+        employeeId: updatedUser.employeeId,
+        profilePhotoUrl: uploaded.secureUrl,
+        submittedPhoto: true,
+      });
+    }
 
     return res.status(200).json({
       success: true,

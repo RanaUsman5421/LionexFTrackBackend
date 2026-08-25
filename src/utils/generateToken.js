@@ -12,6 +12,8 @@ const generateToken = (user) => {
       id: user._id,
       username: user.username,
       email: user.email,
+      role: user.role,
+      authVersion: Number(user.authVersion || 0),
     },
     secretKey,
     { expiresIn: '7d' }

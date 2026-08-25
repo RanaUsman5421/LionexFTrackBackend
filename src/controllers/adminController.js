@@ -7,6 +7,8 @@ const EmployeeCurrentLocation = require('../models/EmployeeCurrentLocation');
 const LocationHistory = require('../models/LocationHistory');
 const TrackingSession = require('../models/TrackingSession');
 const generateToken = require('../utils/generateToken');
+const { userAccessState } = require('../utils/userAccess');
+const { disconnectEmployeeSockets, emitAdminUserEvent } = require('../services/socketService');
 
 const USER_FIELDS = [
   'fullName',
@@ -22,9 +24,23 @@ const USER_FIELDS = [
   'profilePhotoUrl',
 ];
 
-const sanitizeUser = (user) => ({
+const sanitizeUser = (user, metrics = {}) => ({
   id: user._id.toString(),
   ...Object.fromEntries(USER_FIELDS.map((field) => [field, user[field] ?? (field === 'profilePhotoUrl' ? null : '')])),
+  cnic: user.cnic || '',
+  cvUrl: user.cvUrl || null,
+  selfieUrl: user.selfieUrl || null,
+  submittedCV: Boolean(user.cvUrl),
+  submittedPhoto: Boolean(user.profilePhotoUrl),
+  submittedSelfie: Boolean(user.selfieUrl),
+  ...(metrics.leadsCount !== undefined ? { leadsCount: Number(metrics.leadsCount || 0) } : {}),
+  ...(metrics.registeredCount !== undefined ? { registeredCount: Number(metrics.registeredCount || 0) } : {}),
+  ...(metrics.fieldDaysCount !== undefined ? { fieldDaysCount: Number(metrics.fieldDaysCount || 0) } : {}),
+  ...userAccessState(user),
+  approvedAt: user.approvedAt || null,
+  approvedBy: user.approvedBy || null,
+  rejectedAt: user.rejectedAt || null,
+  rejectionReason: user.rejectionReason || '',
   createdAt: user.createdAt,
   updatedAt: user.updatedAt,
 });
@@ -189,17 +205,261 @@ const listUsers = async (req, res) => {
       return res.status(403).json({ success: false, message: 'Not authorized.' });
     }
 
-    const users = await User.find({}).select('-password').sort({ createdAt: -1 }).lean();
+    const [users, snapshots, fieldDayRows] = await Promise.all([
+      User.find({}).select('-password').sort({ createdAt: -1 }).lean(),
+      AppSnapshot.find({}).select('employeeId leads').lean(),
+      TrackingSession.aggregate([
+        { $match: { startedAt: { $type: 'date' } } },
+        { $group: { _id: { employeeId: '$employeeId', day: { $dateToString: { format: '%Y-%m-%d', date: '$startedAt' } } } } },
+        { $group: { _id: '$_id.employeeId', fieldDaysCount: { $sum: 1 } } },
+      ]),
+    ]);
 
+    const snapshotByEmployee = new Map(snapshots.map((snapshot) => [snapshot.employeeId, snapshot]));
+    const fieldDaysByEmployee = new Map(fieldDayRows.map((row) => [row._id, row.fieldDaysCount]));
+    const sanitizedUsers = users.map((user) => {
+      const snapshot = snapshotByEmployee.get(user.employeeId);
+      const leads = Array.isArray(snapshot?.leads) ? snapshot.leads : [];
+      return sanitizeUser(user, {
+        leadsCount: leads.length,
+        registeredCount: leads.filter((lead) => lead.status === 'Registered').length,
+        fieldDaysCount: fieldDaysByEmployee.get(user.employeeId) || 0,
+      });
+    });
     return res.status(200).json({
       success: true,
-      users: users.map(sanitizeUser),
+      users: sanitizedUsers,
+      counts: {
+        total: sanitizedUsers.length,
+        pending: sanitizedUsers.filter((user) => user.approvalStatus === 'pending').length,
+        approved: sanitizedUsers.filter((user) => user.approvalStatus === 'approved').length,
+        rejected: sanitizedUsers.filter((user) => user.approvalStatus === 'rejected').length,
+      },
     });
   } catch (error) {
     return res.status(500).json({
       success: false,
       message: error.message || 'Failed to fetch users.',
     });
+  }
+};
+
+const createUser = async (req, res) => {
+  try {
+    if (!isAuthenticatedAdmin(req)) {
+      return res.status(403).json({ success: false, message: 'Not authorized.' });
+    }
+
+    const values = Object.fromEntries(
+      USER_FIELDS.filter((field) => field !== 'profilePhotoUrl').map((field) => [field, typeof req.body[field] === 'string' ? req.body[field].trim() : ''])
+    );
+    values.email = values.email.toLowerCase();
+    const password = typeof req.body.password === 'string' ? req.body.password : '';
+    const cnic = typeof req.body.cnic === 'string' ? req.body.cnic.trim() : '';
+
+    if (!values.fullName || !values.employeeId || !values.username || !values.email || !password) {
+      return res.status(400).json({ success: false, message: 'Full name, employee ID, username, email, and password are required.' });
+    }
+    if (password.length < 6 || password.length > 128) {
+      return res.status(400).json({ success: false, message: 'Password must be between 6 and 128 characters.' });
+    }
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(values.email)) {
+      return res.status(400).json({ success: false, message: 'Please enter a valid email address.' });
+    }
+    if (cnic.length > 32 || Object.values(values).some((value) => value.length > 255)) {
+      return res.status(400).json({ success: false, message: 'One or more user fields are too long.' });
+    }
+
+    const duplicate = await User.findOne({
+      $or: [{ email: values.email }, { username: values.username }, { employeeId: values.employeeId }],
+    });
+    if (duplicate) {
+      return res.status(409).json({ success: false, message: 'Email, username, or employee ID is already in use.' });
+    }
+
+    const user = await User.create({
+      ...values,
+      cnic,
+      password: await bcrypt.hash(password, 10),
+      approvalStatus: 'approved',
+      accountStatus: 'active',
+      approvedAt: new Date(),
+      approvedBy: req.user._id,
+    });
+    const publicUser = sanitizeUser(user);
+    emitAdminUserEvent('admin:user-created', publicUser);
+    return res.status(201).json({ success: true, message: 'Employee account created successfully.', user: publicUser });
+  } catch (error) {
+    const duplicateKey = error?.code === 11000;
+    return res.status(duplicateKey ? 409 : 500).json({
+      success: false,
+      message: duplicateKey ? 'Email, username, or employee ID is already in use.' : error.message || 'Failed to create user.',
+    });
+  }
+};
+
+const changeUserStatus = async (req, res) => {
+  try {
+    if (!isAuthenticatedAdmin(req)) {
+      return res.status(403).json({ success: false, message: 'Not authorized.' });
+    }
+    const userId = String(req.params.userId || '');
+    if (!userId.match(/^[a-f\d]{24}$/i)) {
+      return res.status(400).json({ success: false, message: 'Invalid user ID.' });
+    }
+    const accountStatus = String(req.body?.accountStatus || '').toLowerCase();
+    if (!['active', 'inactive', 'blocked'].includes(accountStatus)) {
+      return res.status(400).json({ success: false, message: 'Account status must be active, inactive, or blocked.' });
+    }
+
+    const statusUpdate = { accountStatus };
+    if (accountStatus === 'active') {
+      Object.assign(statusUpdate, {
+        approvalStatus: 'approved',
+        approvedAt: new Date(),
+        approvedBy: req.user._id,
+        rejectedAt: null,
+        rejectionReason: '',
+      });
+    }
+    const user = await User.findByIdAndUpdate(
+      userId,
+      { $set: statusUpdate, $inc: { authVersion: 1 } },
+      { new: true, runValidators: true }
+    );
+    if (!user) return res.status(404).json({ success: false, message: 'User not found.' });
+
+    await disconnectEmployeeSockets(user.employeeId);
+    const publicUser = sanitizeUser(user);
+    emitAdminUserEvent('admin:user-updated', publicUser);
+    return res.status(200).json({ success: true, message: `Employee account set to ${accountStatus}.`, user: publicUser });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: error.message || 'Failed to update account status.' });
+  }
+};
+
+const approveUser = async (req, res) => {
+  try {
+    if (!isAuthenticatedAdmin(req)) {
+      return res.status(403).json({ success: false, message: 'Not authorized.' });
+    }
+    const userId = String(req.params.userId || '');
+    if (!userId.match(/^[a-f\d]{24}$/i)) {
+      return res.status(400).json({ success: false, message: 'Invalid user ID.' });
+    }
+    const user = await User.findOneAndUpdate(
+      { _id: userId, approvalStatus: 'pending' },
+      {
+        $set: {
+          approvalStatus: 'approved',
+          accountStatus: 'active',
+          approvedAt: new Date(),
+          approvedBy: req.user._id,
+          rejectedAt: null,
+          rejectionReason: '',
+        },
+      },
+      { new: true, runValidators: true }
+    );
+    if (!user) {
+      const existing = await User.findById(userId);
+      return res.status(existing ? 409 : 404).json({
+        success: false,
+        message: existing ? 'This account is no longer pending approval.' : 'User not found.',
+      });
+    }
+    const publicUser = sanitizeUser(user);
+    emitAdminUserEvent('admin:user-updated', publicUser);
+    return res.status(200).json({ success: true, message: 'Employee approved and activated successfully.', user: publicUser });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: error.message || 'Failed to approve user.' });
+  }
+};
+
+const rejectUser = async (req, res) => {
+  try {
+    if (!isAuthenticatedAdmin(req)) {
+      return res.status(403).json({ success: false, message: 'Not authorized.' });
+    }
+    const userId = String(req.params.userId || '');
+    if (!userId.match(/^[a-f\d]{24}$/i)) {
+      return res.status(400).json({ success: false, message: 'Invalid user ID.' });
+    }
+    const rejectionReason = typeof req.body?.reason === 'string' ? req.body.reason.trim().slice(0, 500) : '';
+    const user = await User.findOneAndUpdate(
+      { _id: userId, approvalStatus: 'pending' },
+      {
+        $set: {
+          approvalStatus: 'rejected',
+          accountStatus: 'inactive',
+          rejectedAt: new Date(),
+          rejectionReason,
+          approvedAt: null,
+          approvedBy: null,
+        },
+      },
+      { new: true, runValidators: true }
+    );
+    if (!user) {
+      const existing = await User.findById(userId);
+      return res.status(existing ? 409 : 404).json({
+        success: false,
+        message: existing ? 'This account is no longer pending approval.' : 'User not found.',
+      });
+    }
+    const publicUser = sanitizeUser(user);
+    emitAdminUserEvent('admin:user-updated', publicUser);
+    return res.status(200).json({ success: true, message: 'Employee registration rejected.', user: publicUser });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: error.message || 'Failed to reject user.' });
+  }
+};
+
+const deleteUser = async (req, res) => {
+  if (!isAuthenticatedAdmin(req)) {
+    return res.status(403).json({ success: false, message: 'Not authorized.' });
+  }
+
+  const userId = String(req.params.userId || '');
+  if (!userId.match(/^[a-f\d]{24}$/i)) {
+    return res.status(400).json({ success: false, message: 'Invalid user ID.' });
+  }
+
+  const session = await User.startSession();
+  let deletedUser;
+
+  try {
+    await session.withTransaction(async () => {
+      const user = await User.findById(userId).session(session);
+      if (!user) {
+        const notFoundError = new Error('User not found.');
+        notFoundError.statusCode = 404;
+        throw notFoundError;
+      }
+
+      deletedUser = { id: user._id.toString(), employeeId: user.employeeId, fullName: user.fullName };
+      const employeeQuery = { employeeId: user.employeeId };
+
+      await AppSnapshot.deleteMany(employeeQuery, { session });
+      await EmployeeCurrentLocation.deleteMany(employeeQuery, { session });
+      await LocationHistory.deleteMany(employeeQuery, { session });
+      await TrackingSession.deleteMany(employeeQuery, { session });
+      await User.deleteOne({ _id: user._id }, { session });
+    });
+
+    emitAdminUserEvent('admin:user-deleted', deletedUser);
+    return res.status(200).json({
+      success: true,
+      message: 'User and associated tracking data deleted successfully.',
+      deletedUser,
+    });
+  } catch (error) {
+    return res.status(error.statusCode || 500).json({
+      success: false,
+      message: error.message || 'Failed to delete user.',
+    });
+  } finally {
+    await session.endSession();
   }
 };
 
@@ -332,4 +592,4 @@ const updateUser = async (req, res) => {
   }
 };
 
-module.exports = { createAdmin, loginAdmin, listUsers, updateUser };
+module.exports = { createAdmin, createUser, loginAdmin, listUsers, updateUser, approveUser, rejectUser, deleteUser, changeUserStatus };

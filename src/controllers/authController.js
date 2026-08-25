@@ -1,6 +1,8 @@
 const bcrypt = require('bcryptjs');
 const User = require('../models/User');
 const generateToken = require('../utils/generateToken');
+const { userAccessState } = require('../utils/userAccess');
+const { emitAdminUserEvent } = require('../services/socketService');
 
 const sanitizeUser = (user) => ({
   id: user._id.toString(),
@@ -15,8 +17,12 @@ const sanitizeUser = (user) => ({
   department: user.department,
   joiningDate: user.joiningDate,
   profilePhotoUrl: user.profilePhotoUrl,
+  cnic: user.cnic || '',
+  cvUrl: user.cvUrl || null,
+  selfieUrl: user.selfieUrl || null,
   createdAt: user.createdAt,
   updatedAt: user.updatedAt,
+  ...userAccessState(user),
 });
 
 const signup = async (req, res) => {
@@ -35,6 +41,9 @@ const signup = async (req, res) => {
       department,
       joiningDate,
       profilePhotoUrl,
+      cnic,
+      cvUrl,
+      selfieUrl,
     } = req.body;
 
     if (!fullName || !employeeId || !username || !email || !password) {
@@ -54,7 +63,14 @@ const signup = async (req, res) => {
     });
 
     if (existingUser) {
-      return res.status(409).json({ success: false, message: 'User already exists.' });
+      const existingState = userAccessState(existingUser);
+      return res.status(409).json({
+        success: false,
+        code: existingState.approvalStatus === 'pending' ? 'ACCOUNT_PENDING' : 'USER_EXISTS',
+        message: existingState.approvalStatus === 'pending'
+          ? 'This account is already waiting for admin approval.'
+          : 'User already exists.',
+      });
     }
 
     const hashedPassword = await bcrypt.hash(password, 10);
@@ -72,15 +88,22 @@ const signup = async (req, res) => {
       department: department || '',
       joiningDate: joiningDate || '',
       profilePhotoUrl: profilePhotoUrl || null,
+      cnic: cnic || '',
+      cvUrl: cvUrl || null,
+      selfieUrl: selfieUrl || null,
+      approvalStatus: 'pending',
+      accountStatus: 'inactive',
     });
 
-    const token = generateToken(user);
+    const publicUser = sanitizeUser(user);
+    emitAdminUserEvent('admin:user-pending', publicUser);
 
-    return res.status(201).json({
+    return res.status(202).json({
       success: true,
-      message: 'Account created successfully.',
-      token,
-      user: sanitizeUser(user),
+      requiresApproval: true,
+      approvalStatus: 'pending',
+      message: 'Account submitted successfully. Please wait for admin approval before logging in.',
+      user: publicUser,
     });
   } catch (error) {
     return res.status(500).json({
@@ -111,6 +134,20 @@ const login = async (req, res) => {
 
     if (!isMatch) {
       return res.status(401).json({ success: false, message: 'Incorrect password.' });
+    }
+
+    const { approvalStatus, accountStatus } = userAccessState(user);
+    if (approvalStatus === 'pending') {
+      return res.status(403).json({ success: false, code: 'ACCOUNT_PENDING', message: 'Your account is waiting for admin approval.' });
+    }
+    if (approvalStatus === 'rejected') {
+      return res.status(403).json({ success: false, code: 'ACCOUNT_REJECTED', message: 'Your account application was rejected. Contact an administrator for help.' });
+    }
+    if (accountStatus === 'blocked') {
+      return res.status(403).json({ success: false, code: 'ACCOUNT_BLOCKED', message: 'Your account has been blocked. Contact an administrator.' });
+    }
+    if (accountStatus !== 'active') {
+      return res.status(403).json({ success: false, code: 'ACCOUNT_INACTIVE', message: 'Your account is inactive. Contact an administrator.' });
     }
 
     const token = generateToken(user);

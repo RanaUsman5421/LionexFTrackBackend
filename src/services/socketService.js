@@ -1,4 +1,7 @@
 const jwt = require('jsonwebtoken');
+const User = require('../models/User');
+const Admin = require('../models/Admin');
+const { canUserAccessApp } = require('../utils/userAccess');
 
 let io;
 
@@ -11,7 +14,7 @@ const initializeSocket = (httpServer) => {
     },
   });
 
-  io.use((socket, next) => {
+  io.use(async (socket, next) => {
     try {
       const token = socket.handshake.auth?.token || socket.handshake.headers?.authorization?.split(' ')[1];
       if (!token) {
@@ -19,7 +22,13 @@ const initializeSocket = (httpServer) => {
       }
 
       const decoded = jwt.verify(token, process.env.SECRET_JWT_KEY);
-      socket.user = decoded;
+      const user = await User.findById(decoded.id).select('email employeeId approvalStatus accountStatus role authVersion');
+      const admin = user ? null : await Admin.findById(decoded.id).select('email employeeId role');
+      if (!user && !admin) return next(new Error('Unauthorized'));
+      if (user && Number(decoded.authVersion || 0) !== Number(user.authVersion || 0)) return next(new Error('Session revoked'));
+      if (user && !canUserAccessApp(user)) return next(new Error('Account access denied'));
+      socket.user = user || admin;
+      socket.principalType = user ? 'user' : 'admin';
       return next();
     } catch (error) {
       return next(new Error('Unauthorized'));
@@ -27,14 +36,25 @@ const initializeSocket = (httpServer) => {
   });
 
   io.on('connection', (socket) => {
-    socket.join(`employee:${socket.user.email || socket.user.id}`);
+    socket.join(`employee:${socket.user.employeeId || socket.user.email || socket.user.id}`);
     const role = String(socket.user.role || '').toLowerCase();
-    if (role.includes('admin') || role.includes('manager')) {
+    if (socket.principalType === 'admin' || role.includes('admin') || role.includes('manager')) {
       socket.join('dashboard');
     }
   });
 
   return io;
+};
+
+const emitAdminUserEvent = (eventName, payload) => {
+  if (!io) return;
+  io.to('dashboard').emit(eventName, payload);
+};
+
+const disconnectEmployeeSockets = async (employeeId) => {
+  if (!io || !employeeId) return;
+  const sockets = await io.in(`employee:${employeeId}`).fetchSockets();
+  sockets.forEach((socket) => socket.disconnect(true));
 };
 
 const getIo = () => io;
@@ -56,4 +76,6 @@ module.exports = {
   getIo,
   emitLocationUpdate,
   emitTrackingStatus,
+  emitAdminUserEvent,
+  disconnectEmployeeSockets,
 };

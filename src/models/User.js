@@ -60,6 +60,53 @@ const userSchema = new mongoose.Schema(
       type: String,
       default: null,
     },
+    cnic: {
+      type: String,
+      trim: true,
+      default: '',
+      maxlength: 32,
+    },
+    cvUrl: {
+      type: String,
+      default: null,
+    },
+    selfieUrl: {
+      type: String,
+      default: null,
+    },
+    authVersion: {
+      type: Number,
+      default: 0,
+      min: 0,
+    },
+    approvalStatus: {
+      type: String,
+      enum: ['pending', 'approved', 'rejected'],
+      index: true,
+    },
+    accountStatus: {
+      type: String,
+      enum: ['active', 'inactive', 'blocked'],
+      index: true,
+    },
+    approvedAt: {
+      type: Date,
+      default: null,
+    },
+    approvedBy: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Admin',
+      default: null,
+    },
+    rejectedAt: {
+      type: Date,
+      default: null,
+    },
+    rejectionReason: {
+      type: String,
+      default: '',
+      maxlength: 500,
+    },
   },
   {
     timestamps: true,

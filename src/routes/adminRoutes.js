@@ -1,6 +1,6 @@
 const express = require('express');
 const { protect } = require('../middleware/authMiddleware');
-const { createAdmin, listUsers, loginAdmin, updateUser } = require('../controllers/adminController');
+const { approveUser, changeUserStatus, createAdmin, createUser, deleteUser, listUsers, loginAdmin, rejectUser, updateUser } = require('../controllers/adminController');
 
 const router = express.Router();
 
@@ -18,6 +18,11 @@ router.get('/create', methodHint('Admin creation'));
 router.post('/create', createAdmin);
 
 router.get('/users', protect, listUsers);
+router.post('/users', protect, createUser);
 router.put('/users/:userId', protect, updateUser);
+router.patch('/users/:userId/status', protect, changeUserStatus);
+router.patch('/users/:userId/approve', protect, approveUser);
+router.patch('/users/:userId/reject', protect, rejectUser);
+router.delete('/users/:userId', protect, deleteUser);
 
 module.exports = router;
