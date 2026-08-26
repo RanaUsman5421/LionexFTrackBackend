@@ -6,6 +6,8 @@ const {
   getLeads,
   getSnapshot,
   getSummary,
+  updateLead,
+  deleteLead,
   upsertSnapshot,
 } = require('../services/appDataService');
 const { parseMultipartFormData } = require('../utils/multipartParser');
@@ -81,6 +83,44 @@ const getLeadsController = async (req, res) => {
     return res.status(200).json({ success: true, leads });
   } catch (error) {
     return res.status(500).json({ success: false, message: error.message || 'Failed to fetch leads.' });
+  }
+};
+
+const updateLeadController = async (req, res) => {
+  try {
+    const employeeId = String(req.params.employeeId || '').trim();
+    const leadId = String(req.params.leadId || '').trim();
+    if (!employeeId || !leadId) {
+      return res.status(400).json({ success: false, message: 'Employee id and lead id are required.' });
+    }
+    if (!canAccessEmployee(req.user, employeeId)) {
+      return res.status(403).json({ success: false, message: 'Not authorized.' });
+    }
+
+    const lead = await updateLead(employeeId, leadId, req.body || {});
+    if (!lead) return res.status(404).json({ success: false, message: 'Lead not found.' });
+    return res.status(200).json({ success: true, message: 'Lead updated successfully.', lead });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: error.message || 'Failed to update lead.' });
+  }
+};
+
+const deleteLeadController = async (req, res) => {
+  try {
+    const employeeId = String(req.params.employeeId || '').trim();
+    const leadId = String(req.params.leadId || '').trim();
+    if (!employeeId || !leadId) {
+      return res.status(400).json({ success: false, message: 'Employee id and lead id are required.' });
+    }
+    if (!canAccessEmployee(req.user, employeeId)) {
+      return res.status(403).json({ success: false, message: 'Not authorized.' });
+    }
+
+    const lead = await deleteLead(employeeId, leadId);
+    if (!lead) return res.status(404).json({ success: false, message: 'Lead not found.' });
+    return res.status(200).json({ success: true, message: 'Lead deleted successfully.', lead });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: error.message || 'Failed to delete lead.' });
   }
 };
 
@@ -236,6 +276,8 @@ module.exports = {
   getSummaryController,
   getDutyController,
   getLeadsController,
+  updateLeadController,
+  deleteLeadController,
   getFollowUpsController,
   getActivityController,
   uploadLeadPhotoController,

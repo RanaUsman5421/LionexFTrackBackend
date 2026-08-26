@@ -202,6 +202,13 @@ const appSnapshotSchema = new mongoose.Schema(
     leadFormDraft: { type: leadDraftSchema, default: () => ({}) },
     leadFormStep: { type: Number, default: 0 },
     leads: { type: [leadSchema], default: [] },
+    leadAdminOverrides: {
+      type: Map,
+      of: mongoose.Schema.Types.Mixed,
+      default: () => ({}),
+      select: false,
+    },
+    deletedLeadIds: { type: [String], default: [], select: false },
     followUps: { type: [followUpSchema], default: [] },
     dismissedFollowUpReminderIds: { type: [String], default: [] },
     activityLog: { type: [activitySchema], default: [] },

@@ -23,6 +23,7 @@ const USER_FIELDS = [
   'joiningDate',
   'profilePhotoUrl',
 ];
+const USER_EDIT_FIELDS = [...USER_FIELDS, 'cnic'];
 
 const sanitizeUser = (user, metrics = {}) => ({
   id: user._id.toString(),
@@ -474,7 +475,7 @@ const updateUser = async (req, res) => {
   }
 
   const values = Object.fromEntries(
-    USER_FIELDS.map((field) => [field, typeof req.body[field] === 'string' ? req.body[field].trim() : ''])
+    USER_EDIT_FIELDS.map((field) => [field, typeof req.body[field] === 'string' ? req.body[field].trim() : ''])
   );
   values.email = values.email.toLowerCase();
   values.profilePhotoUrl = values.profilePhotoUrl || null;
@@ -489,6 +490,9 @@ const updateUser = async (req, res) => {
   if (Object.values(values).some((value) => typeof value === 'string' && value.length > 255)) {
     return res.status(400).json({ success: false, message: 'User fields cannot exceed 255 characters.' });
   }
+  if (values.cnic.length > 32) {
+    return res.status(400).json({ success: false, message: 'CNIC cannot exceed 32 characters.' });
+  }
   if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(values.email)) {
     return res.status(400).json({ success: false, message: 'Please enter a valid email address.' });
   }
@@ -501,6 +505,8 @@ const updateUser = async (req, res) => {
 
   const session = await User.startSession();
   let updatedUser;
+  let previousEmployeeId;
+  let shouldDisconnectUser = false;
 
   try {
     await session.withTransaction(async () => {
@@ -525,9 +531,13 @@ const updateUser = async (req, res) => {
         throw conflictError;
       }
 
-      const previousEmployeeId = existingUser.employeeId;
+      previousEmployeeId = existingUser.employeeId;
+      shouldDisconnectUser = Boolean(password) || previousEmployeeId !== values.employeeId;
       Object.assign(existingUser, values);
-      if (password) existingUser.password = await bcrypt.hash(password, 10);
+      if (password) {
+        existingUser.password = await bcrypt.hash(password, 10);
+        existingUser.authVersion = Number(existingUser.authVersion || 0) + 1;
+      }
       await existingUser.save({ session, runValidators: true });
 
       if (previousEmployeeId !== values.employeeId) {
@@ -574,10 +584,13 @@ const updateUser = async (req, res) => {
       updatedUser = existingUser.toObject();
     });
 
+    if (shouldDisconnectUser) await disconnectEmployeeSockets(previousEmployeeId);
+    const publicUser = sanitizeUser(updatedUser);
+    emitAdminUserEvent('admin:user-updated', publicUser);
     return res.status(200).json({
       success: true,
       message: 'User updated successfully.',
-      user: sanitizeUser(updatedUser),
+      user: publicUser,
     });
   } catch (error) {
     const duplicateKey = error?.code === 11000;

@@ -41,7 +41,19 @@ const protect = async (req, res, next) => {
     req.principalType = user ? 'user' : 'admin';
     next();
   } catch (error) {
-    return res.status(401).json({ success: false, message: 'Not authorized. Invalid token.' });
+    if (error?.name === 'TokenExpiredError') {
+      return res.status(401).json({
+        success: false,
+        code: 'TOKEN_EXPIRED',
+        message: 'Your session has expired. Please log in again.',
+      });
+    }
+
+    return res.status(401).json({
+      success: false,
+      code: 'INVALID_TOKEN',
+      message: 'Not authorized. Invalid token.',
+    });
   }
 };
 

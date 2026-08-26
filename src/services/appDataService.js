@@ -29,7 +29,29 @@ const ensureSnapshotShape = (payload = {}) => ({
 });
 
 const upsertSnapshot = async (employeeId, payload) => {
-  const snapshot = ensureSnapshotShape({ ...payload, employeeId });
+  const existing = await AppSnapshot.findOne({ employeeId })
+    .select('+leadAdminOverrides +deletedLeadIds')
+    .lean();
+  const deletedLeadIds = new Set(existing?.deletedLeadIds || []);
+  const leadAdminOverrides = existing?.leadAdminOverrides instanceof Map
+    ? Object.fromEntries(existing.leadAdminOverrides)
+    : existing?.leadAdminOverrides || {};
+  const incomingLeads = Array.isArray(payload?.leads) ? payload.leads : [];
+  const leads = incomingLeads
+    .filter((lead) => !deletedLeadIds.has(lead?.id))
+    .map((lead) => ({ ...lead, ...(leadAdminOverrides[lead.id] || {}) }));
+  let followUps = (Array.isArray(payload?.followUps) ? payload.followUps : [])
+    .filter((followUp) => !deletedLeadIds.has(followUp?.leadId));
+  Object.entries(leadAdminOverrides).forEach(([leadId, override]) => {
+    if (!Object.prototype.hasOwnProperty.call(override || {}, 'followUps')) return;
+    followUps = followUps.filter((followUp) => followUp.leadId !== leadId);
+    (override.followUps || []).forEach((followUp) => followUps.push({
+      ...followUp,
+      leadId,
+      leadBrand: override.brand || leads.find((lead) => lead.id === leadId)?.brand || followUp.leadBrand || '',
+    }));
+  });
+  const snapshot = ensureSnapshotShape({ ...payload, employeeId, leads, followUps });
   return AppSnapshot.findOneAndUpdate(
     { employeeId },
     { $set: snapshot },
@@ -79,6 +101,76 @@ const getDuty = async (employeeId) => {
 const getLeads = async (employeeId) => {
   const snapshot = await getSnapshot(employeeId);
   return snapshot?.leads || [];
+};
+
+const mutableLeadFields = [
+  'brand', 'address', 'city', 'area', 'contact', 'phone', 'phone2', 'workingSince', 'website',
+  'socials', 'remarks', 'status', 'leadType', 'sessionType', 'dailyVolume', 'weeklyVolume',
+  'monthlyVolume', 'productType', 'avgWeight', 'presence', 'model', 'payment', 'metWith',
+  'decisionMakerAvailable', 'experience', 'meetingTime', 'gps', 'startPhotoUrl',
+  'indoorPhotoUrl', 'followUps', 'timeline', 'photoUrl', 'expiresAtMs', 'durationMinutes', 'draft',
+];
+
+const editableLeadValues = (payload = {}) => mutableLeadFields.reduce((values, field) => {
+  if (Object.prototype.hasOwnProperty.call(payload, field)) values[field] = payload[field];
+  return values;
+}, {});
+
+const updateLead = async (employeeId, leadId, payload) => {
+  const snapshot = await AppSnapshot.findOne({ employeeId }).select('+leadAdminOverrides +deletedLeadIds');
+  if (!snapshot) return null;
+
+  const lead = snapshot.leads.find((item) => item.id === leadId);
+  if (!lead) return null;
+
+  const values = editableLeadValues(payload);
+  lead.set(values);
+  const previousOverride = snapshot.leadAdminOverrides?.get(leadId) || {};
+  snapshot.leadAdminOverrides.set(leadId, { ...previousOverride, ...values });
+
+  if (Object.prototype.hasOwnProperty.call(values, 'followUps')) {
+    snapshot.followUps = snapshot.followUps.filter((followUp) => followUp.leadId !== leadId);
+    lead.followUps.forEach((followUp) => {
+      snapshot.followUps.push({
+        ...followUp.toObject(),
+        leadId,
+        leadBrand: lead.brand,
+      });
+    });
+  }
+
+  if (Object.prototype.hasOwnProperty.call(values, 'brand')) {
+    lead.followUps.forEach((followUp) => { followUp.leadBrand = lead.brand; });
+    snapshot.followUps.forEach((followUp) => {
+      if (followUp.leadId === leadId) followUp.leadBrand = lead.brand;
+    });
+  }
+
+  snapshot.lastSyncedAtMs = Date.now();
+  snapshot.lastSyncedAt = new Date();
+  await snapshot.save();
+  return lead.toObject();
+};
+
+const deleteLead = async (employeeId, leadId) => {
+  const snapshot = await AppSnapshot.findOne({ employeeId }).select('+leadAdminOverrides +deletedLeadIds');
+  if (!snapshot) return null;
+
+  const lead = snapshot.leads.find((item) => item.id === leadId);
+  if (!lead) return null;
+
+  snapshot.leads = snapshot.leads.filter((item) => item.id !== leadId);
+  snapshot.followUps = snapshot.followUps.filter((item) => item.leadId !== leadId);
+  snapshot.leadAdminOverrides.delete(leadId);
+  if (!snapshot.deletedLeadIds.includes(leadId)) snapshot.deletedLeadIds.push(leadId);
+  if (snapshot.activeLeadSession?.draftLeadId === leadId) {
+    snapshot.activeLeadSession = null;
+    snapshot.activeSessionRoute = null;
+  }
+  snapshot.lastSyncedAtMs = Date.now();
+  snapshot.lastSyncedAt = new Date();
+  await snapshot.save();
+  return lead.toObject();
 };
 
 const getFollowUps = async (employeeId) => {
@@ -158,6 +250,8 @@ module.exports = {
   getAllSnapshots,
   getDuty,
   getLeads,
+  updateLead,
+  deleteLead,
   getFollowUps,
   getActivity,
   getSummary,

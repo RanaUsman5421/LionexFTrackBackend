@@ -5,6 +5,8 @@ const {
   getDutyController,
   getFollowUpsController,
   getLeadsController,
+  updateLeadController,
+  deleteLeadController,
   getSnapshotController,
   getSummaryController,
   uploadLeadPhotoController,
@@ -21,6 +23,8 @@ router.get('/snapshot/:employeeId', protect, getSnapshotController);
 router.get('/summary/:employeeId', protect, getSummaryController);
 router.get('/duty/:employeeId', protect, getDutyController);
 router.get('/leads/:employeeId', protect, getLeadsController);
+router.put('/leads/:employeeId/:leadId', protect, updateLeadController);
+router.delete('/leads/:employeeId/:leadId', protect, deleteLeadController);
 router.get('/follow-ups/:employeeId', protect, getFollowUpsController);
 router.get('/activity/:employeeId', protect, getActivityController);
 
