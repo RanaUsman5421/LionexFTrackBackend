@@ -6,6 +6,25 @@ const canAccessEmployee = (user, employeeId) => {
   return role.includes('admin') || role.includes('manager') || String(user?.employeeId || '') === String(employeeId);
 };
 
+const normalizeActivityLog = (activityLog = []) => activityLog.map((activity, index) => {
+  if (String(activity?.id || '').trim()) return activity;
+  const timestamp = Number(activity?.timestampMs || 0);
+  return {
+    ...activity,
+    id: `activity-${timestamp || 'unknown'}-${index}`,
+  };
+});
+
+const repairLegacyActivityIds = (snapshot) => {
+  if (!snapshot?.activityLog) return;
+  snapshot.activityLog.forEach((activity, index) => {
+    if (!String(activity.id || '').trim()) {
+      const timestamp = Number(activity.timestampMs || 0);
+      activity.id = `activity-${timestamp || 'unknown'}-${index}`;
+    }
+  });
+};
+
 const ensureSnapshotShape = (payload = {}) => ({
   employeeId: String(payload.employeeId || '').trim(),
   user: payload.user || {},
@@ -22,7 +41,7 @@ const ensureSnapshotShape = (payload = {}) => ({
   dismissedFollowUpReminderIds: Array.isArray(payload.dismissedFollowUpReminderIds)
     ? payload.dismissedFollowUpReminderIds
     : [],
-  activityLog: Array.isArray(payload.activityLog) ? payload.activityLog : [],
+  activityLog: normalizeActivityLog(Array.isArray(payload.activityLog) ? payload.activityLog : []),
   notifications: Array.isArray(payload.notifications) ? payload.notifications : [],
   lastSyncedAtMs: Number(payload.lastSyncedAtMs || Date.now()),
   lastSyncedAt: payload.lastSyncedAt ? new Date(payload.lastSyncedAt) : new Date(),
@@ -120,6 +139,8 @@ const updateLead = async (employeeId, leadId, payload) => {
   const snapshot = await AppSnapshot.findOne({ employeeId }).select('+leadAdminOverrides +deletedLeadIds');
   if (!snapshot) return null;
 
+  repairLegacyActivityIds(snapshot);
+
   const lead = snapshot.leads.find((item) => item.id === leadId);
   if (!lead) return null;
 
@@ -155,6 +176,8 @@ const updateLead = async (employeeId, leadId, payload) => {
 const deleteLead = async (employeeId, leadId) => {
   const snapshot = await AppSnapshot.findOne({ employeeId }).select('+leadAdminOverrides +deletedLeadIds');
   if (!snapshot) return null;
+
+  repairLegacyActivityIds(snapshot);
 
   const lead = snapshot.leads.find((item) => item.id === leadId);
   if (!lead) return null;

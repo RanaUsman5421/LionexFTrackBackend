@@ -26,7 +26,11 @@ const followUpSchema = new mongoose.Schema(
 
 const activitySchema = new mongoose.Schema(
   {
-    id: { type: String, required: true },
+    id: {
+      type: String,
+      required: true,
+      default: () => `activity-${Date.now()}-${new mongoose.Types.ObjectId()}`,
+    },
     title: { type: String, default: '' },
     subtitle: { type: String, default: '' },
     time: { type: String, default: '' },
