@@ -38,6 +38,7 @@ async function uploadLeadPhotoToCloudinary({ buffer, filename, mimeType, employe
     mimeType,
     folder,
     publicId,
+    forceWebp: true,
   });
 }
 
@@ -55,11 +56,21 @@ async function uploadProfilePhotoToCloudinary({ buffer, filename, mimeType, empl
   });
 }
 
-async function uploadToCloudinary({ buffer, filename, mimeType, folder, publicId }) {
+function isWebpBuffer(buffer) {
+  return Buffer.isBuffer(buffer)
+    && buffer.length >= 12
+    && buffer.subarray(0, 4).toString('ascii') === 'RIFF'
+    && buffer.subarray(8, 12).toString('ascii') === 'WEBP';
+}
+
+async function uploadToCloudinary({ buffer, filename, mimeType, folder, publicId, forceWebp = false }) {
   ensureCloudinaryConfig();
 
   if (!Buffer.isBuffer(buffer) || buffer.length === 0) {
     throw new Error('Upload payload is empty.');
+  }
+  if (forceWebp && !isWebpBuffer(buffer)) {
+    throw new Error('Lead photos must be uploaded as valid WebP images.');
   }
 
   const cloudName = process.env.CLOUDINARY_CLOUD_NAME;
@@ -69,6 +80,7 @@ async function uploadToCloudinary({ buffer, filename, mimeType, folder, publicId
 
   const uploadParams = {
     folder,
+    ...(forceWebp ? { format: 'webp' } : {}),
     overwrite: 'true',
     public_id: publicId,
     timestamp,
@@ -77,11 +89,14 @@ async function uploadToCloudinary({ buffer, filename, mimeType, folder, publicId
   const uploadUrl = `https://api.cloudinary.com/v1_1/${cloudName}/image/upload`;
   const form = new FormData();
 
-  form.append('file', new Blob([buffer], { type: mimeType || 'image/jpeg' }), filename || `${publicId}.jpg`);
+  const uploadMimeType = forceWebp ? 'image/webp' : mimeType || 'image/jpeg';
+  const uploadFilename = forceWebp ? `${publicId}.webp` : filename || `${publicId}.jpg`;
+  form.append('file', new Blob([buffer], { type: uploadMimeType }), uploadFilename);
   form.append('api_key', apiKey);
   form.append('timestamp', String(timestamp));
   form.append('signature', signature);
   form.append('folder', folder);
+  if (forceWebp) form.append('format', 'webp');
   form.append('public_id', publicId);
   form.append('overwrite', 'true');
 
@@ -94,6 +109,9 @@ async function uploadToCloudinary({ buffer, filename, mimeType, folder, publicId
   if (!response.ok || data.error) {
     throw new Error(data?.error?.message || data?.message || 'Cloudinary upload failed.');
   }
+  if (forceWebp && String(data.format || '').toLowerCase() !== 'webp') {
+    throw new Error('Cloudinary did not store the lead photo as WebP.');
+  }
 
   return {
     secureUrl: data.secure_url,
@@ -104,6 +122,7 @@ async function uploadToCloudinary({ buffer, filename, mimeType, folder, publicId
 }
 
 module.exports = {
+  isWebpBuffer,
   uploadLeadPhotoToCloudinary,
   uploadProfilePhotoToCloudinary,
 };
