@@ -15,11 +15,23 @@ const { uploadLeadPhotoToCloudinary, uploadProfilePhotoToCloudinary } = require(
 const User = require('../models/User');
 const AppSnapshot = require('../models/AppSnapshot');
 const { emitAdminUserEvent } = require('../services/socketService');
+const { subscribeToAppData } = require('../services/appDataRealtimeService');
+const {
+  applyEntityDelta,
+  getEntityBundle,
+  importLegacySnapshot,
+} = require('../services/entitySyncService');
+
+const importCurrentLegacySnapshot = async (employeeId) => {
+  const snapshot = await AppSnapshot.findOne({ employeeId }).select('+deletedLeadIds').lean();
+  if (snapshot) await importLegacySnapshot(employeeId, snapshot, { force: true });
+};
 
 const syncSnapshot = async (req, res) => {
   try {
     const employeeId = req.user.employeeId;
     const snapshot = await upsertSnapshot(employeeId, req.body || {});
+    await importLegacySnapshot(employeeId, snapshot, { force: true });
     return res.status(200).json({
       success: true,
       message: 'App snapshot synced.',
@@ -27,6 +39,35 @@ const syncSnapshot = async (req, res) => {
     });
   } catch (error) {
     return res.status(500).json({ success: false, message: error.message || 'Failed to sync app snapshot.' });
+  }
+};
+
+const syncEntitiesController = async (req, res) => {
+  try {
+    const employeeId = req.user.employeeId;
+    const result = await applyEntityDelta(employeeId, req.body || {});
+    return res.status(200).json({
+      success: true,
+      message: 'Entity changes synced.',
+      changed: true,
+      version: result.version,
+      snapshot: result.snapshot,
+    });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: error.message || 'Failed to sync entity changes.' });
+  }
+};
+
+const getEntityBundleController = async (req, res) => {
+  try {
+    const employeeId = req.params.employeeId || req.user.employeeId;
+    if (!canAccessEmployee(req.user, employeeId)) {
+      return res.status(403).json({ success: false, message: 'Not authorized.' });
+    }
+    const result = await getEntityBundle(employeeId, req.query.sinceVersion);
+    return res.status(200).json({ success: true, message: 'Entity sync state fetched.', ...result });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: error.message || 'Failed to fetch entity sync state.' });
   }
 };
 
@@ -99,6 +140,7 @@ const updateLeadController = async (req, res) => {
 
     const lead = await updateLead(employeeId, leadId, req.body || {});
     if (!lead) return res.status(404).json({ success: false, message: 'Lead not found.' });
+    await importCurrentLegacySnapshot(employeeId);
     return res.status(200).json({ success: true, message: 'Lead updated successfully.', lead });
   } catch (error) {
     return res.status(500).json({ success: false, message: error.message || 'Failed to update lead.' });
@@ -118,6 +160,7 @@ const deleteLeadController = async (req, res) => {
 
     const lead = await deleteLead(employeeId, leadId);
     if (!lead) return res.status(404).json({ success: false, message: 'Lead not found.' });
+    await importCurrentLegacySnapshot(employeeId);
     return res.status(200).json({ success: true, message: 'Lead deleted successfully.', lead });
   } catch (error) {
     return res.status(500).json({ success: false, message: error.message || 'Failed to delete lead.' });
@@ -246,6 +289,7 @@ const uploadProfilePhotoController = async (req, res) => {
       },
       { upsert: true, new: true, setDefaultsOnInsert: true }
     );
+    await importCurrentLegacySnapshot(employeeId);
 
     if (updatedUser) {
       emitAdminUserEvent('admin:user-updated', {
@@ -282,4 +326,7 @@ module.exports = {
   getActivityController,
   uploadLeadPhotoController,
   uploadProfilePhotoController,
+  syncEntitiesController,
+  getEntityBundleController,
+  subscribeToAppData,
 };

@@ -71,6 +71,12 @@ const emitTrackingStatus = (payload) => {
   io.to('dashboard').emit('employee:tracking-status', payload);
 };
 
+const emitAppDataUpdate = (payload) => {
+  if (!io) return;
+  io.to(`employee:${payload.employeeId}`).emit('employee:app-data-changed', payload);
+  io.to('dashboard').emit('employee:app-data-changed', payload);
+};
+
 module.exports = {
   initializeSocket,
   getIo,
@@ -78,4 +84,5 @@ module.exports = {
   emitTrackingStatus,
   emitAdminUserEvent,
   disconnectEmployeeSockets,
+  emitAppDataUpdate,
 };

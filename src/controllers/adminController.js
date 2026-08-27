@@ -6,9 +6,15 @@ const AppSnapshot = require('../models/AppSnapshot');
 const EmployeeCurrentLocation = require('../models/EmployeeCurrentLocation');
 const LocationHistory = require('../models/LocationHistory');
 const TrackingSession = require('../models/TrackingSession');
+const AppSyncState = require('../models/AppSyncState');
+const AppSyncMetadata = require('../models/AppSyncMetadata');
+const LeadRecord = require('../models/LeadRecord');
+const FollowUpRecord = require('../models/FollowUpRecord');
+const ActivityRecord = require('../models/ActivityRecord');
 const generateToken = require('../utils/generateToken');
 const { userAccessState } = require('../utils/userAccess');
 const { disconnectEmployeeSockets, emitAdminUserEvent } = require('../services/socketService');
+const { importLegacySnapshot } = require('../services/entitySyncService');
 
 const USER_FIELDS = [
   'fullName',
@@ -445,6 +451,11 @@ const deleteUser = async (req, res) => {
       await EmployeeCurrentLocation.deleteMany(employeeQuery, { session });
       await LocationHistory.deleteMany(employeeQuery, { session });
       await TrackingSession.deleteMany(employeeQuery, { session });
+      await AppSyncState.deleteMany(employeeQuery, { session });
+      await AppSyncMetadata.deleteMany(employeeQuery, { session });
+      await LeadRecord.deleteMany(employeeQuery, { session });
+      await FollowUpRecord.deleteMany(employeeQuery, { session });
+      await ActivityRecord.deleteMany(employeeQuery, { session });
       await User.deleteOne({ _id: user._id }, { session });
     });
 
@@ -561,6 +572,31 @@ const updateUser = async (req, res) => {
           { $set: { employeeId: values.employeeId, 'user.empId': values.employeeId } },
           { session }
         );
+        await AppSyncState.updateMany(
+          { employeeId: previousEmployeeId },
+          { $set: { employeeId: values.employeeId, 'data.user.empId': values.employeeId } },
+          { session }
+        );
+        await AppSyncMetadata.updateMany(
+          { employeeId: previousEmployeeId },
+          { $set: { employeeId: values.employeeId } },
+          { session }
+        );
+        await LeadRecord.updateMany(
+          { employeeId: previousEmployeeId },
+          { $set: { employeeId: values.employeeId } },
+          { session }
+        );
+        await FollowUpRecord.updateMany(
+          { employeeId: previousEmployeeId },
+          { $set: { employeeId: values.employeeId } },
+          { session }
+        );
+        await ActivityRecord.updateMany(
+          { employeeId: previousEmployeeId },
+          { $set: { employeeId: values.employeeId } },
+          { session }
+        );
       }
 
       await AppSnapshot.updateMany(
@@ -585,6 +621,10 @@ const updateUser = async (req, res) => {
     });
 
     if (shouldDisconnectUser) await disconnectEmployeeSockets(previousEmployeeId);
+    const updatedSnapshot = await AppSnapshot.findOne({ employeeId: values.employeeId })
+      .select('+deletedLeadIds')
+      .lean();
+    if (updatedSnapshot) await importLegacySnapshot(values.employeeId, updatedSnapshot, { force: true });
     const publicUser = sanitizeUser(updatedUser);
     emitAdminUserEvent('admin:user-updated', publicUser);
     return res.status(200).json({
