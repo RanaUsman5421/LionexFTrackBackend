@@ -4,6 +4,7 @@ const {
   createTrackingSession,
   stopTrackingSession,
   validateLocationPayload,
+  setCurrentTrackingStatus,
 } = require('../services/locationService');
 const { emitTrackingStatus } = require('../services/socketService');
 
@@ -35,13 +36,17 @@ const startTracking = async (req, res) => {
 const stopTracking = async (req, res) => {
   try {
     const employeeId = req.user.employeeId;
+    const reason = String(req.body?.reason || 'manual').trim().toLowerCase();
     const validated = req.body?.location ? validateLocationPayload(req.body.location) : { valid: true, data: null };
     const location = validated.valid ? validated.data : null;
 
     const session = await stopTrackingSession(employeeId, location);
+    const trackingStatus = reason === 'gps_disabled' ? 'GPS_DISABLED' : 'TRACKING_STOPPED';
+    await setCurrentTrackingStatus(employeeId, trackingStatus);
     emitTrackingStatus({
       employeeId,
-      status: 'stopped',
+      status: reason === 'gps_disabled' ? 'gps_disabled' : 'stopped',
+      trackingStatus,
       timestamp: location?.timestamp || new Date(),
     });
 

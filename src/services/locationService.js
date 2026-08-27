@@ -236,6 +236,20 @@ const stopTrackingSession = async (employeeId, location) => {
   );
 };
 
+const setCurrentTrackingStatus = async (employeeId, trackingStatus) => {
+  return EmployeeCurrentLocation.findOneAndUpdate(
+    { employeeId },
+    {
+      $set: {
+        trackingStatus,
+        sessionStatus: 'stopped',
+        lastSeenAt: new Date(),
+      },
+    },
+    { new: true }
+  );
+};
+
 const getCurrentLocationForEmployee = async (employeeId) => {
   return EmployeeCurrentLocation.findOne({ employeeId }).lean();
 };
@@ -270,6 +284,7 @@ module.exports = {
   createTrackingSession,
   touchTrackingSession,
   stopTrackingSession,
+  setCurrentTrackingStatus,
   getCurrentLocationForEmployee,
   getCurrentLocations,
   getLocationHistory,
