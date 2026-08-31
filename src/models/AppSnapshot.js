@@ -63,6 +63,8 @@ const leadSessionSchema = new mongoose.Schema(
     address: { type: String, default: '' },
     startTimeMs: { type: Number, default: 0 },
     startLabel: { type: String, default: '' },
+    meetingStartTimeMs: { type: Number, default: 0 },
+    meetingStartLabel: { type: String, default: '' },
     startPhotoUrl: { type: String, default: null },
     brand: { type: String, default: '' },
     draftLeadId: { type: String, default: null },
