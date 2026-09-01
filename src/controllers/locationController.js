@@ -12,6 +12,19 @@ const {
   validateHeartbeatPayload,
 } = require('../services/locationService');
 const { emitLocationUpdate } = require('../services/socketService');
+const { getVerificationGate, publicChallenge, wasTimestampVerificationBlocked } = require('../services/verificationService');
+
+const rejectWhenVerificationRequired = async (req, res) => {
+  const gate = await getVerificationGate(req.user.employeeId);
+  if (!gate.blocked) return false;
+  res.status(423).json({
+    success: false,
+    code: 'VERIFICATION_REQUIRED',
+    message: 'Biometric verification is required before tracking can continue.',
+    challenge: publicChallenge(gate.challenge),
+  });
+  return true;
+};
 
 const serializeCurrent = (doc) => {
   if (!doc) return null;
@@ -49,6 +62,7 @@ const formatPayload = (employeeId, locationDoc) => ({
 
 const submitLocation = async (req, res) => {
   try {
+    if (await rejectWhenVerificationRequired(req, res)) return;
     const validated = validateLocationPayload(req.body || {});
     if (!validated.valid) {
       return res.status(400).json({ success: false, message: validated.message });
@@ -56,6 +70,13 @@ const submitLocation = async (req, res) => {
 
     if (!validated.data.clientLocationId) {
       return res.status(400).json({ success: false, message: 'clientLocationId is required.' });
+    }
+    if (await wasTimestampVerificationBlocked(req.user.employeeId, validated.data.timestamp)) {
+      return res.status(422).json({
+        success: false,
+        code: 'LOCATION_DURING_VERIFICATION_LOCK',
+        message: 'Location was captured while tracking was locked for verification.',
+      });
     }
 
     const employeeId = req.user.employeeId;
@@ -80,6 +101,7 @@ const submitLocation = async (req, res) => {
 
 const submitLocationBulk = async (req, res) => {
   try {
+    if (await rejectWhenVerificationRequired(req, res)) return;
     const locations = Array.isArray(req.body?.locations) ? req.body.locations : [];
     if (!locations.length) {
       return res.status(400).json({ success: false, message: 'locations array is required.' });
@@ -98,6 +120,11 @@ const submitLocationBulk = async (req, res) => {
       const data = item.parsed.data;
       if (!data.clientLocationId) {
         rejected.push({ clientLocationId: '', reason: 'clientLocationId is required.' });
+        continue;
+      }
+      if (await wasTimestampVerificationBlocked(employeeId, data.timestamp)) {
+        processed.push(data.clientLocationId);
+        rejected.push({ clientLocationId: data.clientLocationId, reason: 'Captured during biometric verification lock.' });
         continue;
       }
 
@@ -196,6 +223,7 @@ const getHistoryController = async (req, res) => {
 
 const heartbeatLocation = async (req, res) => {
   try {
+    if (await rejectWhenVerificationRequired(req, res)) return;
     const validated = validateHeartbeatPayload(req.body || {});
     if (!validated.valid) {
       return res.status(400).json({ success: false, message: validated.message });

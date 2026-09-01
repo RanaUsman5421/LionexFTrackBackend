@@ -8,6 +8,7 @@ const adminRoutes = require('./src/routes/adminRoutes');
 const appDataRoutes = require('./src/routes/appDataRoutes');
 const locationRoutes = require('./src/routes/locationRoutes');
 const trackingRoutes = require('./src/routes/trackingRoutes');
+const verificationRoutes = require('./src/routes/verificationRoutes');
 const { initializeSocket } = require('./src/services/socketService');
 
 dotenv.config();
@@ -44,6 +45,7 @@ app.use('/api/admin', adminRoutes);
 app.use('/api/app-data', appDataRoutes);
 app.use('/api/locations', locationRoutes);
 app.use('/api/tracking', trackingRoutes);
+app.use('/api/verifications', verificationRoutes);
 
 const startServer = async () => {
   await connectDB();

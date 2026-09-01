@@ -29,7 +29,7 @@ const employeeCurrentLocationSchema = new mongoose.Schema(
     lastSeenAt: { type: Date, default: null },
     trackingStatus: {
       type: String,
-      enum: ['ACTIVE', 'STALE', 'OFFLINE', 'GPS_DISABLED', 'TRACKING_STOPPED'],
+      enum: ['ACTIVE', 'STALE', 'OFFLINE', 'GPS_DISABLED', 'TRACKING_STOPPED', 'VERIFICATION_REQUIRED'],
       default: 'ACTIVE',
     },
     sessionStatus: {

@@ -7,9 +7,19 @@ const {
   setCurrentTrackingStatus,
 } = require('../services/locationService');
 const { emitTrackingStatus } = require('../services/socketService');
+const { getVerificationGate, publicChallenge } = require('../services/verificationService');
 
 const startTracking = async (req, res) => {
   try {
+    const gate = await getVerificationGate(req.user.employeeId);
+    if (gate.blocked) {
+      return res.status(423).json({
+        success: false,
+        code: 'VERIFICATION_REQUIRED',
+        message: 'Biometric verification is required before tracking can start.',
+        challenge: publicChallenge(gate.challenge),
+      });
+    }
     const validated = validateLocationPayload(req.body || {});
     if (!validated.valid) {
       return res.status(400).json({ success: false, message: validated.message });

@@ -77,6 +77,12 @@ const emitAppDataUpdate = (payload) => {
   io.to('dashboard').emit('employee:app-data-changed', payload);
 };
 
+const emitVerificationEvent = (eventName, payload) => {
+  if (!io || !payload?.employeeId) return;
+  io.to(`employee:${payload.employeeId}`).emit(eventName, payload);
+  io.to('dashboard').emit(eventName, payload);
+};
+
 module.exports = {
   initializeSocket,
   getIo,
@@ -85,4 +91,5 @@ module.exports = {
   emitAdminUserEvent,
   disconnectEmployeeSockets,
   emitAppDataUpdate,
+  emitVerificationEvent,
 };

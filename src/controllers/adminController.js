@@ -11,6 +11,8 @@ const AppSyncMetadata = require('../models/AppSyncMetadata');
 const LeadRecord = require('../models/LeadRecord');
 const FollowUpRecord = require('../models/FollowUpRecord');
 const ActivityRecord = require('../models/ActivityRecord');
+const VerificationChallenge = require('../models/VerificationChallenge');
+const BiometricDevice = require('../models/BiometricDevice');
 const generateToken = require('../utils/generateToken');
 const { userAccessState } = require('../utils/userAccess');
 const { disconnectEmployeeSockets, emitAdminUserEvent } = require('../services/socketService');
@@ -456,6 +458,8 @@ const deleteUser = async (req, res) => {
       await LeadRecord.deleteMany(employeeQuery, { session });
       await FollowUpRecord.deleteMany(employeeQuery, { session });
       await ActivityRecord.deleteMany(employeeQuery, { session });
+      await VerificationChallenge.deleteMany(employeeQuery, { session });
+      await BiometricDevice.deleteMany(employeeQuery, { session });
       await User.deleteOne({ _id: user._id }, { session });
     });
 
@@ -593,6 +597,16 @@ const updateUser = async (req, res) => {
           { session }
         );
         await ActivityRecord.updateMany(
+          { employeeId: previousEmployeeId },
+          { $set: { employeeId: values.employeeId } },
+          { session }
+        );
+        await VerificationChallenge.updateMany(
+          { employeeId: previousEmployeeId },
+          { $set: { employeeId: values.employeeId } },
+          { session }
+        );
+        await BiometricDevice.updateMany(
           { employeeId: previousEmployeeId },
           { $set: { employeeId: values.employeeId } },
           { session }
