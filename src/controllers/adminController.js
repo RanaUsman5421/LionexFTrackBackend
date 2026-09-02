@@ -17,6 +17,9 @@ const generateToken = require('../utils/generateToken');
 const { userAccessState } = require('../utils/userAccess');
 const { disconnectEmployeeSockets, emitAdminUserEvent } = require('../services/socketService');
 const { importLegacySnapshot } = require('../services/entitySyncService');
+const Organization = require('../models/Organization');
+const { ensureLegacyOrganization } = require('../services/organizationBootstrapService');
+const { normalizeAdminRole, permissionsFor, hasPermission } = require('../utils/adminPermissions');
 
 const USER_FIELDS = [
   'fullName',
@@ -35,6 +38,7 @@ const USER_EDIT_FIELDS = [...USER_FIELDS, 'cnic'];
 
 const sanitizeUser = (user, metrics = {}) => ({
   id: user._id.toString(),
+  organizationId: user.organizationId ? String(user.organizationId) : null,
   ...Object.fromEntries(USER_FIELDS.map((field) => [field, user[field] ?? (field === 'profilePhotoUrl' ? null : '')])),
   cnic: user.cnic || '',
   cvUrl: user.cvUrl || null,
@@ -61,6 +65,10 @@ const sanitizeAdmin = (admin) => ({
   username: admin.username,
   email: admin.email,
   role: admin.role,
+  adminRole: normalizeAdminRole(admin),
+  permissions: permissionsFor(admin),
+  organizationId: admin.organizationId ? String(admin.organizationId) : null,
+  accountStatus: admin.accountStatus || 'active',
   createdAt: admin.createdAt,
   updatedAt: admin.updatedAt,
 });
@@ -140,14 +148,23 @@ const createAdmin = async (req, res) => {
 
     const hashedPassword = await bcrypt.hash(password, 10);
 
-    const admin = await Admin.create({
+    let admin = await Admin.create({
       fullName,
       employeeId,
       username: normalizedUsername,
       email: normalizedEmail,
       password: hashedPassword,
       role: 'admin',
+      organizationId: requestAdmin?.organizationId || null,
+      adminRole: requestAdmin ? 'super_admin' : 'owner',
+      invitedBy: requestAdmin?._id || null,
     });
+
+    if (!admin.organizationId) {
+      const organization = await ensureLegacyOrganization();
+      admin = await Admin.findById(admin._id);
+      if (!admin.organizationId && organization) admin.organizationId = organization._id;
+    }
 
     const token = generateToken(admin);
 
@@ -185,6 +202,9 @@ const loginAdmin = async (req, res) => {
     if (!isAdminRole(admin.role)) {
       return res.status(403).json({ success: false, message: 'Admin access only.' });
     }
+    if (admin.accountStatus === 'suspended') {
+      return res.status(403).json({ success: false, message: 'This admin account is suspended.' });
+    }
 
     const isMatch = await admin.comparePassword(password);
 
@@ -214,14 +234,28 @@ const listUsers = async (req, res) => {
       return res.status(403).json({ success: false, message: 'Not authorized.' });
     }
 
-    const [users, snapshots, fieldDayRows] = await Promise.all([
-      User.find({}).select('-password').sort({ createdAt: -1 }).lean(),
-      AppSnapshot.find({}).select('employeeId leads').lean(),
+    const organizationId = req.organizationId;
+    const limit = Math.min(200, Math.max(1, Number(req.query.limit || 100)));
+    const userQuery = { organizationId };
+    if (req.query.cursor?.match(/^[a-f\d]{24}$/i)) userQuery._id = { $lt: req.query.cursor };
+    if (req.query.status && ['pending', 'approved', 'rejected'].includes(req.query.status)) userQuery.approvalStatus = req.query.status;
+    const search = String(req.query.search || '').trim().slice(0, 100);
+    if (search) userQuery.$text = { $search: search };
+    const users = await User.find(userQuery).select('-password').sort({ _id: -1 }).limit(limit + 1).lean();
+    const hasMore = users.length > limit;
+    if (hasMore) users.pop();
+    const employeeIds = users.map((user) => user.employeeId);
+    const [snapshots, fieldDayRows, total, pending, approved, rejected] = await Promise.all([
+      AppSnapshot.find({ organizationId, employeeId: { $in: employeeIds } }).select('employeeId leads').lean(),
       TrackingSession.aggregate([
-        { $match: { startedAt: { $type: 'date' } } },
+        { $match: { organizationId, employeeId: { $in: employeeIds }, startedAt: { $type: 'date' } } },
         { $group: { _id: { employeeId: '$employeeId', day: { $dateToString: { format: '%Y-%m-%d', date: '$startedAt' } } } } },
         { $group: { _id: '$_id.employeeId', fieldDaysCount: { $sum: 1 } } },
       ]),
+      User.countDocuments({ organizationId }),
+      User.countDocuments({ organizationId, approvalStatus: 'pending' }),
+      User.countDocuments({ organizationId, approvalStatus: 'approved' }),
+      User.countDocuments({ organizationId, approvalStatus: 'rejected' }),
     ]);
 
     const snapshotByEmployee = new Map(snapshots.map((snapshot) => [snapshot.employeeId, snapshot]));
@@ -239,11 +273,9 @@ const listUsers = async (req, res) => {
       success: true,
       users: sanitizedUsers,
       counts: {
-        total: sanitizedUsers.length,
-        pending: sanitizedUsers.filter((user) => user.approvalStatus === 'pending').length,
-        approved: sanitizedUsers.filter((user) => user.approvalStatus === 'approved').length,
-        rejected: sanitizedUsers.filter((user) => user.approvalStatus === 'rejected').length,
+        total, pending, approved, rejected,
       },
+      pagination: { hasMore, nextCursor: hasMore ? String(users.at(-1)._id) : null, limit },
     });
   } catch (error) {
     return res.status(500).json({
@@ -257,6 +289,9 @@ const createUser = async (req, res) => {
   try {
     if (!isAuthenticatedAdmin(req)) {
       return res.status(403).json({ success: false, message: 'Not authorized.' });
+    }
+    if (!hasPermission(req.user, 'employees.manage')) {
+      return res.status(403).json({ success: false, message: 'Employee management permission required.' });
     }
 
     const values = Object.fromEntries(
@@ -294,6 +329,7 @@ const createUser = async (req, res) => {
       accountStatus: 'active',
       approvedAt: new Date(),
       approvedBy: req.user._id,
+      organizationId: req.organizationId,
     });
     const publicUser = sanitizeUser(user);
     emitAdminUserEvent('admin:user-created', publicUser);
@@ -312,6 +348,7 @@ const changeUserStatus = async (req, res) => {
     if (!isAuthenticatedAdmin(req)) {
       return res.status(403).json({ success: false, message: 'Not authorized.' });
     }
+    if (!hasPermission(req.user, 'employees.manage')) return res.status(403).json({ success: false, message: 'Not authorized.' });
     const userId = String(req.params.userId || '');
     if (!userId.match(/^[a-f\d]{24}$/i)) {
       return res.status(400).json({ success: false, message: 'Invalid user ID.' });
@@ -331,14 +368,14 @@ const changeUserStatus = async (req, res) => {
         rejectionReason: '',
       });
     }
-    const user = await User.findByIdAndUpdate(
-      userId,
+    const user = await User.findOneAndUpdate(
+      { _id: userId, organizationId: req.organizationId },
       { $set: statusUpdate, $inc: { authVersion: 1 } },
       { new: true, runValidators: true }
     );
     if (!user) return res.status(404).json({ success: false, message: 'User not found.' });
 
-    await disconnectEmployeeSockets(user.employeeId);
+    await disconnectEmployeeSockets(user.employeeId, req.organizationId);
     const publicUser = sanitizeUser(user);
     emitAdminUserEvent('admin:user-updated', publicUser);
     return res.status(200).json({ success: true, message: `Employee account set to ${accountStatus}.`, user: publicUser });
@@ -352,12 +389,13 @@ const approveUser = async (req, res) => {
     if (!isAuthenticatedAdmin(req)) {
       return res.status(403).json({ success: false, message: 'Not authorized.' });
     }
+    if (!hasPermission(req.user, 'employees.approve')) return res.status(403).json({ success: false, message: 'Not authorized.' });
     const userId = String(req.params.userId || '');
     if (!userId.match(/^[a-f\d]{24}$/i)) {
       return res.status(400).json({ success: false, message: 'Invalid user ID.' });
     }
     const user = await User.findOneAndUpdate(
-      { _id: userId, approvalStatus: 'pending' },
+      { _id: userId, organizationId: req.organizationId, approvalStatus: 'pending' },
       {
         $set: {
           approvalStatus: 'approved',
@@ -390,13 +428,14 @@ const rejectUser = async (req, res) => {
     if (!isAuthenticatedAdmin(req)) {
       return res.status(403).json({ success: false, message: 'Not authorized.' });
     }
+    if (!hasPermission(req.user, 'employees.approve')) return res.status(403).json({ success: false, message: 'Not authorized.' });
     const userId = String(req.params.userId || '');
     if (!userId.match(/^[a-f\d]{24}$/i)) {
       return res.status(400).json({ success: false, message: 'Invalid user ID.' });
     }
     const rejectionReason = typeof req.body?.reason === 'string' ? req.body.reason.trim().slice(0, 500) : '';
     const user = await User.findOneAndUpdate(
-      { _id: userId, approvalStatus: 'pending' },
+      { _id: userId, organizationId: req.organizationId, approvalStatus: 'pending' },
       {
         $set: {
           approvalStatus: 'rejected',
@@ -428,6 +467,7 @@ const deleteUser = async (req, res) => {
   if (!isAuthenticatedAdmin(req)) {
     return res.status(403).json({ success: false, message: 'Not authorized.' });
   }
+  if (!hasPermission(req.user, 'employees.manage')) return res.status(403).json({ success: false, message: 'Not authorized.' });
 
   const userId = String(req.params.userId || '');
   if (!userId.match(/^[a-f\d]{24}$/i)) {
@@ -439,14 +479,14 @@ const deleteUser = async (req, res) => {
 
   try {
     await session.withTransaction(async () => {
-      const user = await User.findById(userId).session(session);
+      const user = await User.findOne({ _id: userId, organizationId: req.organizationId }).session(session);
       if (!user) {
         const notFoundError = new Error('User not found.');
         notFoundError.statusCode = 404;
         throw notFoundError;
       }
 
-      deletedUser = { id: user._id.toString(), employeeId: user.employeeId, fullName: user.fullName };
+      deletedUser = { id: user._id.toString(), organizationId: String(req.organizationId), employeeId: user.employeeId, fullName: user.fullName };
       const employeeQuery = { employeeId: user.employeeId };
 
       await AppSnapshot.deleteMany(employeeQuery, { session });
@@ -483,6 +523,7 @@ const updateUser = async (req, res) => {
   if (!isAuthenticatedAdmin(req)) {
     return res.status(403).json({ success: false, message: 'Not authorized.' });
   }
+  if (!hasPermission(req.user, 'employees.manage')) return res.status(403).json({ success: false, message: 'Not authorized.' });
 
   const userId = String(req.params.userId || '');
   if (!userId.match(/^[a-f\d]{24}$/i)) {
@@ -525,7 +566,7 @@ const updateUser = async (req, res) => {
 
   try {
     await session.withTransaction(async () => {
-      const existingUser = await User.findById(userId).session(session);
+      const existingUser = await User.findOne({ _id: userId, organizationId: req.organizationId }).session(session);
       if (!existingUser) {
         const notFoundError = new Error('User not found.');
         notFoundError.statusCode = 404;
@@ -634,7 +675,7 @@ const updateUser = async (req, res) => {
       updatedUser = existingUser.toObject();
     });
 
-    if (shouldDisconnectUser) await disconnectEmployeeSockets(previousEmployeeId);
+    if (shouldDisconnectUser) await disconnectEmployeeSockets(previousEmployeeId, req.organizationId);
     const updatedSnapshot = await AppSnapshot.findOne({ employeeId: values.employeeId })
       .select('+deletedLeadIds')
       .lean();

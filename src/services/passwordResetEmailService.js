@@ -59,4 +59,51 @@ const sendPasswordResetEmail = async ({ to, name, otp, expiresInMinutes }) => {
   return data;
 };
 
-module.exports = { buildPasswordResetEmail, sendPasswordResetEmail };
+const buildInvitationEmail = ({ name, organizationName, inviterName, inviteUrl, type, expiresInHours }) => {
+  const safeName = escapeHtml(name || 'there');
+  const safeOrganization = escapeHtml(organizationName);
+  const safeInviter = escapeHtml(inviterName || 'an administrator');
+  const safeUrl = escapeHtml(inviteUrl);
+  const accountType = type === 'admin' ? 'administrator' : 'employee';
+  return `<!doctype html><html lang="en"><body style="margin:0;background:#f4f6f8;font-family:Arial,Helvetica,sans-serif;color:#252832;">
+  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="padding:32px 12px;"><tr><td align="center">
+  <table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:600px;background:#fff;border-radius:18px;overflow:hidden;box-shadow:0 8px 28px rgba(24,28,38,.08);">
+  <tr><td style="background:#22252d;padding:28px 36px;color:#fff;font-size:24px;font-weight:800;">LionEx <span style="color:#f97316;">FTrack</span></td></tr>
+  <tr><td style="padding:36px;"><h1 style="margin:0 0 16px;font-size:24px;">Join ${safeOrganization}</h1>
+  <p style="font-size:15px;line-height:1.7;">Hello ${safeName},</p><p style="font-size:15px;line-height:1.7;color:#555b67;">${safeInviter} invited you to join ${safeOrganization} as an ${accountType}.</p>
+  <p style="margin:28px 0;text-align:center;"><a href="${safeUrl}" style="display:inline-block;background:#f97316;color:#fff;text-decoration:none;font-weight:700;padding:14px 24px;border-radius:10px;">Accept invitation</a></p>
+  <p style="font-size:13px;line-height:1.7;color:#777;">This private, one-time link expires in ${Number(expiresInHours || 48)} hours. If you were not expecting it, ignore this email.</p>
+  <p style="font-size:12px;line-height:1.6;color:#858b96;word-break:break-all;">${safeUrl}</p></td></tr></table></td></tr></table></body></html>`;
+};
+
+const sendInvitationEmail = async (details) => {
+  const apiKey = process.env.RESEND_EMAIL_API_KEY;
+  if (!apiKey) throw new Error('RESEND_EMAIL_API_KEY is not configured.');
+  const resend = new Resend(apiKey);
+  const { data, error } = await resend.emails.send({
+    from: process.env.RESEND_FROM_EMAIL || 'LionEx FTrack <onboarding@resend.dev>',
+    to: [details.to],
+    subject: `You're invited to ${details.organizationName} on LionEx FTrack`,
+    html: buildInvitationEmail(details),
+  });
+  if (error) throw new Error(error.message || 'The invitation email could not be sent.');
+  return data;
+};
+
+const buildAdminSignupEmail = ({ name, otp, companyName, expiresInMinutes }) => `<!doctype html><html lang="en"><body style="margin:0;background:#f4f6f8;font-family:Arial,Helvetica,sans-serif;color:#252832;"><table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="padding:32px 12px"><tr><td align="center"><table role="presentation" width="100%" cellspacing="0" cellpadding="0" style="max-width:600px;background:#fff;border-radius:18px;overflow:hidden"><tr><td style="background:#22252d;padding:28px 36px;color:#fff;font-size:24px;font-weight:800">LionEx <span style="color:#f97316">FTrack</span></td></tr><tr><td style="padding:36px"><h1 style="margin:0 0 16px">Verify your admin signup</h1><p>Hello ${escapeHtml(name)},</p><p style="color:#555b67;line-height:1.7">Use this code to create the ${escapeHtml(companyName)} organization and its Owner account.</p><div style="margin:24px 0;padding:20px;text-align:center;background:#fff4ec;border:1px solid #ffd8bd;border-radius:14px"><div style="font-size:36px;font-weight:800;letter-spacing:8px;color:#f97316">${escapeHtml(otp)}</div><div style="font-size:12px;color:#777;margin-top:8px">Expires in ${Number(expiresInMinutes)} minutes</div></div><p style="font-size:13px;color:#777">If you did not request this account, ignore this email.</p></td></tr></table></td></tr></table></body></html>`;
+
+const sendAdminSignupEmail = async (details) => {
+  const apiKey = process.env.RESEND_EMAIL_API_KEY;
+  if (!apiKey) throw new Error('RESEND_EMAIL_API_KEY is not configured.');
+  const resend = new Resend(apiKey);
+  const { data, error } = await resend.emails.send({
+    from: process.env.RESEND_FROM_EMAIL || 'LionEx FTrack <onboarding@resend.dev>',
+    to: [details.to],
+    subject: 'Verify your LionEx FTrack organization',
+    html: buildAdminSignupEmail(details),
+  });
+  if (error) throw new Error(error.message || 'The verification email could not be sent.');
+  return data;
+};
+
+module.exports = { buildPasswordResetEmail, sendPasswordResetEmail, buildInvitationEmail, sendInvitationEmail, buildAdminSignupEmail, sendAdminSignupEmail };

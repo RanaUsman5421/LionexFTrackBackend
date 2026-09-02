@@ -1,15 +1,9 @@
 const EmployeeCurrentLocation = require('../models/EmployeeCurrentLocation');
 const LocationHistory = require('../models/LocationHistory');
 const TrackingSession = require('../models/TrackingSession');
+const { canAccessEmployee } = require('../utils/tenantAccess');
 
 const MAX_ACCURACY_METERS = 5000;
-
-const isManagerOrAdmin = (user) => {
-  const role = String(user?.role || '').toLowerCase();
-  return role.includes('admin') || role.includes('manager');
-};
-
-const canAccessEmployee = (user, employeeId) => isManagerOrAdmin(user) || String(user?.employeeId || '') === String(employeeId);
 
 const normalizeTimestamp = (value) => {
   const timestamp = value ? new Date(value) : new Date();
@@ -93,7 +87,8 @@ const validateHeartbeatPayload = (payload) => {
   };
 };
 
-const buildHistoryDocument = (employeeId, location) => ({
+const buildHistoryDocument = (employeeId, location, organizationId) => ({
+  organizationId,
   employeeId,
   clientLocationId: location.clientLocationId,
   location: {
@@ -109,7 +104,8 @@ const buildHistoryDocument = (employeeId, location) => ({
   networkType: location.networkType,
 });
 
-const buildCurrentDocument = (employeeId, location, sessionStatus = 'active') => ({
+const buildCurrentDocument = (employeeId, location, sessionStatus = 'active', organizationId) => ({
+  organizationId,
   employeeId,
   location: {
     type: 'Point',
@@ -126,7 +122,7 @@ const buildCurrentDocument = (employeeId, location, sessionStatus = 'active') =>
   sessionStatus,
 });
 
-const upsertCurrentLocationIfNewer = async (employeeId, location, sessionStatus = 'active') => {
+const upsertCurrentLocationIfNewer = async (employeeId, location, sessionStatus = 'active', organizationId) => {
   const existing = await EmployeeCurrentLocation.findOne({ employeeId });
   if (existing && existing.timestamp && existing.timestamp >= location.timestamp) {
     return existing;
@@ -134,12 +130,12 @@ const upsertCurrentLocationIfNewer = async (employeeId, location, sessionStatus 
 
   return EmployeeCurrentLocation.findOneAndUpdate(
     { employeeId },
-    buildCurrentDocument(employeeId, location, sessionStatus),
+    buildCurrentDocument(employeeId, location, sessionStatus, organizationId),
     { upsert: true, new: true, setDefaultsOnInsert: true }
   );
 };
 
-const touchCurrentLocation = async (employeeId, location, sessionStatus = 'active') => {
+const touchCurrentLocation = async (employeeId, location, sessionStatus = 'active', organizationId) => {
   const existing = await EmployeeCurrentLocation.findOne({ employeeId });
   const lastSeenAt = location.timestamp;
   if (existing && existing.lastSeenAt && existing.lastSeenAt >= lastSeenAt) {
@@ -176,7 +172,7 @@ const touchCurrentLocation = async (employeeId, location, sessionStatus = 'activ
     { employeeId },
     {
       $set: {
-        ...buildCurrentDocument(employeeId, location, sessionStatus),
+        ...buildCurrentDocument(employeeId, location, sessionStatus, organizationId),
         lastSeenAt,
       },
     },
@@ -184,9 +180,9 @@ const touchCurrentLocation = async (employeeId, location, sessionStatus = 'activ
   );
 };
 
-const storeHistoryLocation = async (employeeId, location) => {
+const storeHistoryLocation = async (employeeId, location, organizationId) => {
   try {
-    return await LocationHistory.create(buildHistoryDocument(employeeId, location));
+    return await LocationHistory.create(buildHistoryDocument(employeeId, location, organizationId));
   } catch (error) {
     if (error.code === 11000) {
       return null;
@@ -195,13 +191,14 @@ const storeHistoryLocation = async (employeeId, location) => {
   }
 };
 
-const createTrackingSession = async (employeeId, location) => {
+const createTrackingSession = async (employeeId, location, organizationId) => {
   const active = await TrackingSession.findOne({ employeeId, status: 'active' }).sort({ startedAt: -1 });
   if (active) {
     return active;
   }
 
   return TrackingSession.create({
+    organizationId,
     employeeId,
     startedAt: location.timestamp,
     lastHeartbeatAt: location.timestamp,
@@ -254,8 +251,10 @@ const getCurrentLocationForEmployee = async (employeeId) => {
   return EmployeeCurrentLocation.findOne({ employeeId }).lean();
 };
 
-const getCurrentLocations = async () => {
-  return EmployeeCurrentLocation.find({}).sort({ updatedAt: -1 }).lean();
+const getCurrentLocations = async (organizationId, employeeIds = []) => {
+  const query = organizationId ? { organizationId } : {};
+  if (employeeIds.length) query.employeeId = { $in: employeeIds };
+  return EmployeeCurrentLocation.find(query).sort({ updatedAt: -1 }).limit(500).lean();
 };
 
 const getLocationHistory = async (employeeId, { from, to, limit = 100 }) => {
@@ -273,7 +272,6 @@ const getLocationHistory = async (employeeId, { from, to, limit = 100 }) => {
 };
 
 module.exports = {
-  isManagerOrAdmin,
   canAccessEmployee,
   validateLocationPayload,
   validateHeartbeatPayload,

@@ -2,6 +2,7 @@ const mongoose = require('mongoose');
 
 const verificationChallengeSchema = new mongoose.Schema(
   {
+    organizationId: { type: mongoose.Schema.Types.ObjectId, ref: 'Organization', default: null, index: true },
     employeeId: { type: String, required: true, trim: true, index: true },
     userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true, index: true },
     createdBy: { type: mongoose.Schema.Types.ObjectId, ref: 'Admin', required: true },
@@ -30,5 +31,6 @@ const verificationChallengeSchema = new mongoose.Schema(
 );
 
 verificationChallengeSchema.index({ employeeId: 1, status: 1, scheduledAt: -1 });
+verificationChallengeSchema.index({ organizationId: 1, employeeId: 1, status: 1, scheduledAt: -1 });
 
 module.exports = mongoose.model('VerificationChallenge', verificationChallengeSchema);

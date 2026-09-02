@@ -24,6 +24,12 @@ const protect = async (req, res, next) => {
     if (user && Number(decoded.authVersion || 0) !== Number(user.authVersion || 0)) {
       return res.status(401).json({ success: false, code: 'SESSION_REVOKED', message: 'This session has been revoked. Please log in again.' });
     }
+    if (admin && Number(decoded.authVersion || 0) !== Number(admin.authVersion || 0)) {
+      return res.status(401).json({ success: false, code: 'SESSION_REVOKED', message: 'This admin session has been revoked.' });
+    }
+    if (admin && admin.accountStatus === 'suspended') {
+      return res.status(403).json({ success: false, code: 'ACCOUNT_SUSPENDED', message: 'This admin account is suspended.' });
+    }
 
     if (user && !canUserAccessApp(user)) {
       const { approvalStatus, accountStatus } = userAccessState(user);
@@ -39,6 +45,10 @@ const protect = async (req, res, next) => {
 
     req.user = principal;
     req.principalType = user ? 'user' : 'admin';
+    req.organizationId = principal.organizationId || null;
+    if (!req.organizationId) {
+      return res.status(403).json({ success: false, code: 'ORGANIZATION_REQUIRED', message: 'This account is not linked to an organization.' });
+    }
     next();
   } catch (error) {
     if (error?.name === 'TokenExpiredError') {

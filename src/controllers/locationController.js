@@ -45,7 +45,8 @@ const serializeCurrent = (doc) => {
   };
 };
 
-const formatPayload = (employeeId, locationDoc) => ({
+const formatPayload = (employeeId, locationDoc, organizationId) => ({
+  organizationId,
   employeeId,
   latitude: locationDoc.location.coordinates[1],
   longitude: locationDoc.location.coordinates[0],
@@ -80,12 +81,12 @@ const submitLocation = async (req, res) => {
     }
 
     const employeeId = req.user.employeeId;
-    const historyDoc = await storeHistoryLocation(employeeId, validated.data);
-    const currentDoc = await upsertCurrentLocationIfNewer(employeeId, validated.data, 'active');
+    const historyDoc = await storeHistoryLocation(employeeId, validated.data, req.organizationId);
+    const currentDoc = await upsertCurrentLocationIfNewer(employeeId, validated.data, 'active', req.organizationId);
     await touchTrackingSession(employeeId, validated.data.timestamp);
 
     if (currentDoc && currentDoc.timestamp && currentDoc.timestamp.getTime() === validated.data.timestamp.getTime()) {
-      emitLocationUpdate(formatPayload(employeeId, currentDoc));
+      emitLocationUpdate(formatPayload(employeeId, currentDoc, req.organizationId));
     }
 
     return res.status(201).json({
@@ -128,13 +129,14 @@ const submitLocationBulk = async (req, res) => {
         continue;
       }
 
-      const historyDoc = await storeHistoryLocation(employeeId, data);
-      const currentDoc = await upsertCurrentLocationIfNewer(employeeId, data, 'active');
+      const historyDoc = await storeHistoryLocation(employeeId, data, req.organizationId);
+      const currentDoc = await upsertCurrentLocationIfNewer(employeeId, data, 'active', req.organizationId);
       await touchTrackingSession(employeeId, data.timestamp);
       processed.push(data.clientLocationId);
 
       if (historyDoc && currentDoc && currentDoc.timestamp.getTime() === data.timestamp.getTime()) {
         emitLocationUpdate({
+          organizationId: req.organizationId,
           employeeId,
           latitude: currentDoc.location.coordinates[1],
           longitude: currentDoc.location.coordinates[0],
@@ -166,7 +168,7 @@ const getCurrentLocationsController = async (req, res) => {
   try {
     const employeeId = req.params.employeeId;
     if (employeeId) {
-      if (!canAccessEmployee(req.user, employeeId)) {
+      if (!await canAccessEmployee(req.user, employeeId)) {
         return res.status(403).json({ success: false, message: 'Not authorized to view this employee.' });
       }
 
@@ -174,11 +176,15 @@ const getCurrentLocationsController = async (req, res) => {
       return res.status(200).json({ success: true, current: serializeCurrent(current) });
     }
 
-    if (!canAccessEmployee(req.user, req.user.employeeId)) {
+    if (!await canAccessEmployee(req.user, req.user.employeeId)) {
       return res.status(403).json({ success: false, message: 'Not authorized.' });
     }
 
-    const currentLocations = await getCurrentLocations();
+    const requestedIds = String(req.query.employeeIds || '').split(',').map((value) => value.trim()).filter(Boolean).slice(0, 200);
+    if (requestedIds.length && !(String(req.user.role || '').toLowerCase().includes('manager') || String(req.user.role || '').toLowerCase().includes('admin'))) {
+      return res.status(403).json({ success: false, message: 'Not authorized to request team locations.' });
+    }
+    const currentLocations = await getCurrentLocations(req.organizationId, requestedIds);
     const filtered = String(req.user.role || '').toLowerCase().includes('manager') || String(req.user.role || '').toLowerCase().includes('admin')
       ? currentLocations
       : currentLocations.filter((item) => item.employeeId === req.user.employeeId);
@@ -195,7 +201,7 @@ const getCurrentLocationsController = async (req, res) => {
 const getHistoryController = async (req, res) => {
   try {
     const { employeeId } = req.params;
-    if (!canAccessEmployee(req.user, employeeId)) {
+    if (!await canAccessEmployee(req.user, employeeId)) {
       return res.status(403).json({ success: false, message: 'Not authorized to view this history.' });
     }
 
@@ -230,11 +236,12 @@ const heartbeatLocation = async (req, res) => {
     }
 
     const employeeId = req.user.employeeId;
-    const currentDoc = await touchCurrentLocation(employeeId, validated.data, 'active');
-    const session = (await touchTrackingSession(employeeId, validated.data.timestamp)) || await createTrackingSession(employeeId, validated.data);
+    const currentDoc = await touchCurrentLocation(employeeId, validated.data, 'active', req.organizationId);
+    const session = (await touchTrackingSession(employeeId, validated.data.timestamp)) || await createTrackingSession(employeeId, validated.data, req.organizationId);
 
     if (currentDoc) {
       emitLocationUpdate({
+        organizationId: req.organizationId,
         employeeId,
         latitude: currentDoc.location.coordinates[1],
         longitude: currentDoc.location.coordinates[0],

@@ -2,6 +2,7 @@ const mongoose = require('mongoose');
 
 const employeeCurrentLocationSchema = new mongoose.Schema(
   {
+    organizationId: { type: mongoose.Schema.Types.ObjectId, ref: 'Organization', default: null, index: true },
     employeeId: {
       type: String,
       required: true,
@@ -42,5 +43,6 @@ const employeeCurrentLocationSchema = new mongoose.Schema(
 );
 
 employeeCurrentLocationSchema.index({ location: '2dsphere' });
+employeeCurrentLocationSchema.index({ organizationId: 1, updatedAt: -1 });
 
 module.exports = mongoose.model('EmployeeCurrentLocation', employeeCurrentLocationSchema);

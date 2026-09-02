@@ -22,13 +22,14 @@ const initializeSocket = (httpServer) => {
       }
 
       const decoded = jwt.verify(token, process.env.SECRET_JWT_KEY);
-      const user = await User.findById(decoded.id).select('email employeeId approvalStatus accountStatus role authVersion');
-      const admin = user ? null : await Admin.findById(decoded.id).select('email employeeId role');
+      const user = await User.findById(decoded.id).select('email employeeId approvalStatus accountStatus role authVersion organizationId');
+      const admin = user ? null : await Admin.findById(decoded.id).select('email employeeId role adminRole accountStatus authVersion organizationId');
       if (!user && !admin) return next(new Error('Unauthorized'));
       if (user && Number(decoded.authVersion || 0) !== Number(user.authVersion || 0)) return next(new Error('Session revoked'));
       if (user && !canUserAccessApp(user)) return next(new Error('Account access denied'));
       socket.user = user || admin;
       socket.principalType = user ? 'user' : 'admin';
+      if (!socket.user.organizationId || (admin && admin.accountStatus === 'suspended')) return next(new Error('Organization access denied'));
       return next();
     } catch (error) {
       return next(new Error('Unauthorized'));
@@ -36,10 +37,11 @@ const initializeSocket = (httpServer) => {
   });
 
   io.on('connection', (socket) => {
-    socket.join(`employee:${socket.user.employeeId || socket.user.email || socket.user.id}`);
+    const organizationId = String(socket.user.organizationId);
+    socket.join(`org:${organizationId}:employee:${socket.user.employeeId || socket.user.email || socket.user.id}`);
     const role = String(socket.user.role || '').toLowerCase();
     if (socket.principalType === 'admin' || role.includes('admin') || role.includes('manager')) {
-      socket.join('dashboard');
+      socket.join(`org:${organizationId}:dashboard`);
     }
   });
 
@@ -47,13 +49,13 @@ const initializeSocket = (httpServer) => {
 };
 
 const emitAdminUserEvent = (eventName, payload) => {
-  if (!io) return;
-  io.to('dashboard').emit(eventName, payload);
+  if (!io || !payload?.organizationId) return;
+  io.to(`org:${payload.organizationId}:dashboard`).emit(eventName, payload);
 };
 
-const disconnectEmployeeSockets = async (employeeId) => {
-  if (!io || !employeeId) return;
-  const sockets = await io.in(`employee:${employeeId}`).fetchSockets();
+const disconnectEmployeeSockets = async (employeeId, organizationId) => {
+  if (!io || !employeeId || !organizationId) return;
+  const sockets = await io.in(`org:${organizationId}:employee:${employeeId}`).fetchSockets();
   sockets.forEach((socket) => socket.disconnect(true));
 };
 
@@ -61,26 +63,29 @@ const getIo = () => io;
 
 const emitLocationUpdate = (payload) => {
   if (!io) return;
-  io.to(`employee:${payload.employeeId}`).emit('employee:location-updated', payload);
-  io.to('dashboard').emit('employee:location-updated', payload);
+  if (!payload.organizationId) return;
+  io.to(`org:${payload.organizationId}:employee:${payload.employeeId}`).emit('employee:location-updated', payload);
+  io.to(`org:${payload.organizationId}:dashboard`).emit('employee:location-updated', payload);
 };
 
 const emitTrackingStatus = (payload) => {
   if (!io) return;
-  io.to(`employee:${payload.employeeId}`).emit('employee:tracking-status', payload);
-  io.to('dashboard').emit('employee:tracking-status', payload);
+  if (!payload.organizationId) return;
+  io.to(`org:${payload.organizationId}:employee:${payload.employeeId}`).emit('employee:tracking-status', payload);
+  io.to(`org:${payload.organizationId}:dashboard`).emit('employee:tracking-status', payload);
 };
 
 const emitAppDataUpdate = (payload) => {
   if (!io) return;
-  io.to(`employee:${payload.employeeId}`).emit('employee:app-data-changed', payload);
-  io.to('dashboard').emit('employee:app-data-changed', payload);
+  if (!payload.organizationId) return;
+  io.to(`org:${payload.organizationId}:employee:${payload.employeeId}`).emit('employee:app-data-changed', payload);
+  io.to(`org:${payload.organizationId}:dashboard`).emit('employee:app-data-changed', payload);
 };
 
 const emitVerificationEvent = (eventName, payload) => {
-  if (!io || !payload?.employeeId) return;
-  io.to(`employee:${payload.employeeId}`).emit(eventName, payload);
-  io.to('dashboard').emit(eventName, payload);
+  if (!io || !payload?.employeeId || !payload?.organizationId) return;
+  io.to(`org:${payload.organizationId}:employee:${payload.employeeId}`).emit(eventName, payload);
+  io.to(`org:${payload.organizationId}:dashboard`).emit(eventName, payload);
 };
 
 module.exports = {

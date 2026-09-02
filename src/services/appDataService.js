@@ -1,10 +1,6 @@
 const AppSnapshot = require('../models/AppSnapshot');
 const User = require('../models/User');
-
-const canAccessEmployee = (user, employeeId) => {
-  const role = String(user?.role || '').toLowerCase();
-  return role.includes('admin') || role.includes('manager') || String(user?.employeeId || '') === String(employeeId);
-};
+const { canAccessEmployee } = require('../utils/tenantAccess');
 
 const normalizeActivityLog = (activityLog = []) => activityLog.map((activity, index) => {
   if (String(activity?.id || '').trim()) return activity;
@@ -47,7 +43,7 @@ const ensureSnapshotShape = (payload = {}) => ({
   lastSyncedAt: payload.lastSyncedAt ? new Date(payload.lastSyncedAt) : new Date(),
 });
 
-const upsertSnapshot = async (employeeId, payload) => {
+const upsertSnapshot = async (employeeId, payload, organizationId) => {
   const existing = await AppSnapshot.findOne({ employeeId })
     .select('+leadAdminOverrides +deletedLeadIds')
     .lean();
@@ -71,6 +67,7 @@ const upsertSnapshot = async (employeeId, payload) => {
     }));
   });
   const snapshot = ensureSnapshotShape({ ...payload, employeeId, leads, followUps });
+  if (organizationId) snapshot.organizationId = organizationId;
   return AppSnapshot.findOneAndUpdate(
     { employeeId },
     { $set: snapshot },
@@ -108,8 +105,8 @@ const getSnapshot = async (employeeId) => {
   };
 };
 
-const getAllSnapshots = async () => {
-  return AppSnapshot.find({}).sort({ updatedAt: -1 }).lean();
+const getAllSnapshots = async (organizationId) => {
+  return AppSnapshot.find(organizationId ? { organizationId } : {}).sort({ updatedAt: -1 }).lean();
 };
 
 const getDuty = async (employeeId) => {

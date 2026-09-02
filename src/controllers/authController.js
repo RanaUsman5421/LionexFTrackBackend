@@ -6,6 +6,7 @@ const generateToken = require('../utils/generateToken');
 const { userAccessState } = require('../utils/userAccess');
 const { emitAdminUserEvent } = require('../services/socketService');
 const { sendPasswordResetEmail } = require('../services/passwordResetEmailService');
+const Organization = require('../models/Organization');
 
 const OTP_EXPIRY_MINUTES = 10;
 const OTP_RESEND_DELAY_MS = 60 * 1000;
@@ -38,6 +39,7 @@ const sanitizeUser = (user) => ({
   selfieUrl: user.selfieUrl || null,
   createdAt: user.createdAt,
   updatedAt: user.updatedAt,
+  organizationId: user.organizationId ? String(user.organizationId) : null,
   ...userAccessState(user),
 });
 
@@ -91,6 +93,7 @@ const signup = async (req, res) => {
 
     const hashedPassword = await bcrypt.hash(password, 10);
 
+    const defaultOrganization = await Organization.findOne({ status: 'active' }).sort({ createdAt: 1 });
     const user = await User.create({
       fullName: fullName.trim(),
       employeeId: employeeId.trim(),
@@ -107,6 +110,7 @@ const signup = async (req, res) => {
       cnic: cnic || '',
       cvUrl: cvUrl || null,
       selfieUrl: selfieUrl || null,
+      organizationId: defaultOrganization?._id || null,
       approvalStatus: 'pending',
       accountStatus: 'inactive',
     });

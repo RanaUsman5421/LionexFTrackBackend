@@ -2,6 +2,7 @@ const mongoose = require('mongoose');
 
 const biometricDeviceSchema = new mongoose.Schema(
   {
+    organizationId: { type: mongoose.Schema.Types.ObjectId, ref: 'Organization', default: null, index: true },
     employeeId: { type: String, required: true, trim: true, unique: true, index: true },
     userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true, unique: true },
     deviceId: { type: String, required: true, trim: true },

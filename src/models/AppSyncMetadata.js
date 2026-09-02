@@ -2,6 +2,7 @@ const mongoose = require('mongoose');
 
 const appSyncMetadataSchema = new mongoose.Schema(
   {
+    organizationId: { type: mongoose.Schema.Types.ObjectId, ref: 'Organization', default: null, index: true },
     employeeId: { type: String, required: true, unique: true, index: true, trim: true },
     version: { type: Number, default: 0 },
     lastLegacyUpdatedAt: { type: Date, default: null },

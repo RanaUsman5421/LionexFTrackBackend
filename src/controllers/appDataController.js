@@ -30,8 +30,8 @@ const importCurrentLegacySnapshot = async (employeeId) => {
 const syncSnapshot = async (req, res) => {
   try {
     const employeeId = req.user.employeeId;
-    const snapshot = await upsertSnapshot(employeeId, req.body || {});
-    await importLegacySnapshot(employeeId, snapshot, { force: true });
+    const snapshot = await upsertSnapshot(employeeId, req.body || {}, req.organizationId);
+    await importLegacySnapshot(employeeId, snapshot, { force: true, organizationId: req.organizationId });
     return res.status(200).json({
       success: true,
       message: 'App snapshot synced.',
@@ -45,7 +45,7 @@ const syncSnapshot = async (req, res) => {
 const syncEntitiesController = async (req, res) => {
   try {
     const employeeId = req.user.employeeId;
-    const result = await applyEntityDelta(employeeId, req.body || {});
+    const result = await applyEntityDelta(employeeId, req.body || {}, req.organizationId);
     return res.status(200).json({
       success: true,
       message: 'Entity changes synced.',
@@ -61,7 +61,7 @@ const syncEntitiesController = async (req, res) => {
 const getEntityBundleController = async (req, res) => {
   try {
     const employeeId = req.params.employeeId || req.user.employeeId;
-    if (!canAccessEmployee(req.user, employeeId)) {
+    if (!await canAccessEmployee(req.user, employeeId)) {
       return res.status(403).json({ success: false, message: 'Not authorized.' });
     }
     const result = await getEntityBundle(employeeId, req.query.sinceVersion);
@@ -74,7 +74,7 @@ const getEntityBundleController = async (req, res) => {
 const getSnapshotController = async (req, res) => {
   try {
     const employeeId = req.params.employeeId || req.user.employeeId;
-    if (!canAccessEmployee(req.user, employeeId)) {
+    if (!await canAccessEmployee(req.user, employeeId)) {
       return res.status(403).json({ success: false, message: 'Not authorized.' });
     }
 
@@ -88,7 +88,7 @@ const getSnapshotController = async (req, res) => {
 const getSummaryController = async (req, res) => {
   try {
     const employeeId = req.params.employeeId || req.user.employeeId;
-    if (!canAccessEmployee(req.user, employeeId)) {
+    if (!await canAccessEmployee(req.user, employeeId)) {
       return res.status(403).json({ success: false, message: 'Not authorized.' });
     }
 
@@ -102,7 +102,7 @@ const getSummaryController = async (req, res) => {
 const getDutyController = async (req, res) => {
   try {
     const employeeId = req.params.employeeId || req.user.employeeId;
-    if (!canAccessEmployee(req.user, employeeId)) {
+    if (!await canAccessEmployee(req.user, employeeId)) {
       return res.status(403).json({ success: false, message: 'Not authorized.' });
     }
 
@@ -116,7 +116,7 @@ const getDutyController = async (req, res) => {
 const getLeadsController = async (req, res) => {
   try {
     const employeeId = req.params.employeeId || req.user.employeeId;
-    if (!canAccessEmployee(req.user, employeeId)) {
+    if (!await canAccessEmployee(req.user, employeeId)) {
       return res.status(403).json({ success: false, message: 'Not authorized.' });
     }
 
@@ -134,7 +134,7 @@ const updateLeadController = async (req, res) => {
     if (!employeeId || !leadId) {
       return res.status(400).json({ success: false, message: 'Employee id and lead id are required.' });
     }
-    if (!canAccessEmployee(req.user, employeeId)) {
+    if (!await canAccessEmployee(req.user, employeeId)) {
       return res.status(403).json({ success: false, message: 'Not authorized.' });
     }
 
@@ -154,7 +154,7 @@ const deleteLeadController = async (req, res) => {
     if (!employeeId || !leadId) {
       return res.status(400).json({ success: false, message: 'Employee id and lead id are required.' });
     }
-    if (!canAccessEmployee(req.user, employeeId)) {
+    if (!await canAccessEmployee(req.user, employeeId)) {
       return res.status(403).json({ success: false, message: 'Not authorized.' });
     }
 
@@ -170,7 +170,7 @@ const deleteLeadController = async (req, res) => {
 const getFollowUpsController = async (req, res) => {
   try {
     const employeeId = req.params.employeeId || req.user.employeeId;
-    if (!canAccessEmployee(req.user, employeeId)) {
+    if (!await canAccessEmployee(req.user, employeeId)) {
       return res.status(403).json({ success: false, message: 'Not authorized.' });
     }
 
@@ -184,7 +184,7 @@ const getFollowUpsController = async (req, res) => {
 const getActivityController = async (req, res) => {
   try {
     const employeeId = req.params.employeeId || req.user.employeeId;
-    if (!canAccessEmployee(req.user, employeeId)) {
+    if (!await canAccessEmployee(req.user, employeeId)) {
       return res.status(403).json({ success: false, message: 'Not authorized.' });
     }
 
@@ -212,7 +212,7 @@ const uploadLeadPhotoController = async (req, res) => {
     }
 
     const employeeId = String(fields.employeeId || req.user.employeeId || '').trim();
-    if (!canAccessEmployee(req.user, employeeId)) {
+    if (!await canAccessEmployee(req.user, employeeId)) {
       return res.status(403).json({ success: false, message: 'Not authorized.' });
     }
     const leadId = String(fields.leadId || '').trim() || `lead-${Date.now()}`;
@@ -262,7 +262,7 @@ const uploadProfilePhotoController = async (req, res) => {
     if (!employeeId) {
       return res.status(400).json({ success: false, message: 'Employee id is required.' });
     }
-    if (!canAccessEmployee(req.user, employeeId)) {
+    if (!await canAccessEmployee(req.user, employeeId)) {
       return res.status(403).json({ success: false, message: 'Not authorized.' });
     }
 
@@ -283,6 +283,7 @@ const uploadProfilePhotoController = async (req, res) => {
       { employeeId },
       {
         $set: {
+          organizationId: req.organizationId,
           'user.profilePhotoUrl': uploaded.secureUrl,
           lastSyncedAt: new Date(),
         },
@@ -294,6 +295,7 @@ const uploadProfilePhotoController = async (req, res) => {
     if (updatedUser) {
       emitAdminUserEvent('admin:user-updated', {
         id: updatedUser._id.toString(),
+        organizationId: String(req.organizationId),
         employeeId: updatedUser.employeeId,
         profilePhotoUrl: uploaded.secureUrl,
         submittedPhoto: true,

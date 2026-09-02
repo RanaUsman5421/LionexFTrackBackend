@@ -26,8 +26,9 @@ const startTracking = async (req, res) => {
     }
 
     const employeeId = req.user.employeeId;
-    const session = await createTrackingSession(employeeId, validated.data);
+    const session = await createTrackingSession(employeeId, validated.data, req.organizationId);
     emitTrackingStatus({
+      organizationId: req.organizationId,
       employeeId,
       status: 'active',
       timestamp: validated.data.timestamp,
@@ -54,6 +55,7 @@ const stopTracking = async (req, res) => {
     const trackingStatus = reason === 'gps_disabled' ? 'GPS_DISABLED' : 'TRACKING_STOPPED';
     await setCurrentTrackingStatus(employeeId, trackingStatus);
     emitTrackingStatus({
+      organizationId: req.organizationId,
       employeeId,
       status: reason === 'gps_disabled' ? 'gps_disabled' : 'stopped',
       trackingStatus,
@@ -73,7 +75,7 @@ const stopTracking = async (req, res) => {
 const getTrackingStatus = async (req, res) => {
   try {
     const employeeId = req.params.employeeId || req.user.employeeId;
-    if (!canAccessEmployee(req.user, employeeId)) {
+    if (!await canAccessEmployee(req.user, employeeId)) {
       return res.status(403).json({ success: false, message: 'Not authorized.' });
     }
 

@@ -56,6 +56,12 @@ const userSchema = new mongoose.Schema(
       type: String,
       default: '',
     },
+    organizationId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Organization',
+      default: null,
+      index: true,
+    },
     profilePhotoUrl: {
       type: String,
       default: null,
@@ -107,11 +113,17 @@ const userSchema = new mongoose.Schema(
       default: '',
       maxlength: 500,
     },
+    invitationId: { type: mongoose.Schema.Types.ObjectId, ref: 'Invitation', default: null },
+    invitedBy: { type: mongoose.Schema.Types.ObjectId, ref: 'Admin', default: null },
   },
   {
     timestamps: true,
   }
 );
+
+userSchema.index({ organizationId: 1, approvalStatus: 1, accountStatus: 1, createdAt: -1 });
+userSchema.index({ organizationId: 1, employeeId: 1 });
+userSchema.index({ fullName: 'text', employeeId: 'text', email: 'text', username: 'text' });
 
 userSchema.methods.comparePassword = async function (candidatePassword) {
   return bcrypt.compare(candidatePassword, this.password);

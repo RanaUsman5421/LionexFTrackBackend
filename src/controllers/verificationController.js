@@ -13,6 +13,7 @@ const {
 } = require('../services/verificationService');
 const { emitVerificationEvent } = require('../services/socketService');
 const { userAccessState } = require('../utils/userAccess');
+const { hasPermission } = require('../utils/adminPermissions');
 
 const isAdmin = (req) => req.principalType === 'admin' && String(req.user?.role || '').toLowerCase().includes('admin');
 const isEmployee = (req) => req.principalType === 'user' && Boolean(req.user?.employeeId);
@@ -32,7 +33,7 @@ const decorate = (challenge) => ({
 
 const createVerification = async (req, res) => {
   try {
-    if (!isAdmin(req)) return res.status(403).json({ success: false, message: 'Admin authorization required.' });
+    if (!isAdmin(req) || !hasPermission(req.user, 'verifications.manage')) return res.status(403).json({ success: false, message: 'Verification management permission required.' });
     const employeeId = String(req.body?.employeeId || '').trim();
     const scheduledAt = new Date(req.body?.scheduledAt);
     if (!employeeId || Number.isNaN(scheduledAt.getTime())) {
@@ -41,18 +42,19 @@ const createVerification = async (req, res) => {
     if (scheduledAt.getTime() <= Date.now()) {
       return res.status(400).json({ success: false, message: 'Verification time must be in the future.' });
     }
-    const user = await User.findOne({ employeeId }).select('fullName employeeId role department approvalStatus accountStatus');
+    const user = await User.findOne({ employeeId, organizationId: req.organizationId }).select('fullName employeeId role department approvalStatus accountStatus');
     if (!user) return res.status(404).json({ success: false, message: 'Employee not found.' });
     const access = userAccessState(user);
     if (access.approvalStatus !== 'approved' || access.accountStatus !== 'active') {
       return res.status(409).json({ success: false, message: 'Verification can only be scheduled for an approved active employee.' });
     }
     await refreshEmployeeChallenges(employeeId);
-    const existing = await VerificationChallenge.findOne({ employeeId, status: { $in: ['scheduled', 'pending', 'missed'] } });
+    const existing = await VerificationChallenge.findOne({ employeeId, organizationId: req.organizationId, status: { $in: ['scheduled', 'pending', 'missed'] } });
     if (existing) {
       return res.status(409).json({ success: false, message: 'This employee already has an unresolved verification.' });
     }
     const challenge = await VerificationChallenge.create({
+      organizationId: req.organizationId,
       employeeId,
       userId: user._id,
       createdBy: req.user._id,
@@ -61,7 +63,7 @@ const createVerification = async (req, res) => {
       expiresAt: new Date(scheduledAt.getTime() + 5 * 60_000),
       nonce: crypto.randomBytes(32).toString('base64url'),
     });
-    const payload = { employeeId, challenge: decorate({ ...challenge.toObject(), userId: user }), trackingBlocked: false };
+    const payload = { organizationId: req.organizationId, employeeId, challenge: decorate({ ...challenge.toObject(), userId: user }), trackingBlocked: false };
     emitVerificationEvent('employee:verification-scheduled', payload);
     return res.status(201).json({ success: true, message: 'Employee verification scheduled.', ...payload });
   } catch (error) {
@@ -71,13 +73,13 @@ const createVerification = async (req, res) => {
 
 const listVerifications = async (req, res) => {
   try {
-    if (!isAdmin(req)) return res.status(403).json({ success: false, message: 'Admin authorization required.' });
+    if (!isAdmin(req) || !hasPermission(req.user, 'verifications.manage')) return res.status(403).json({ success: false, message: 'Verification management permission required.' });
     const employeeId = String(req.query.employeeId || '').trim();
     const employeeIds = employeeId
       ? [employeeId]
-      : await VerificationChallenge.distinct('employeeId', { status: { $in: ['scheduled', 'pending'] } });
+      : await VerificationChallenge.distinct('employeeId', { organizationId: req.organizationId, status: { $in: ['scheduled', 'pending'] } });
     await Promise.all(employeeIds.map((id) => refreshEmployeeChallenges(id)));
-    const query = employeeId ? { employeeId } : {};
+    const query = employeeId ? { employeeId, organizationId: req.organizationId } : { organizationId: req.organizationId };
     const rows = await VerificationChallenge.find(query)
       .populate('userId', 'fullName employeeId role department')
       .sort({ scheduledAt: -1 })
@@ -90,9 +92,10 @@ const listVerifications = async (req, res) => {
 
 const cancelVerification = async (req, res) => {
   try {
-    if (!isAdmin(req)) return res.status(403).json({ success: false, message: 'Admin authorization required.' });
+    if (!isAdmin(req) || !hasPermission(req.user, 'verifications.manage')) return res.status(403).json({ success: false, message: 'Verification management permission required.' });
     const challenge = await VerificationChallenge.findOne({
       _id: req.params.verificationId,
+      organizationId: req.organizationId,
       status: { $in: ['scheduled', 'pending', 'missed'] },
     });
     if (!challenge) return res.status(404).json({ success: false, message: 'Active verification not found.' });
@@ -107,7 +110,7 @@ const cancelVerification = async (req, res) => {
         { $set: { trackingStatus: 'TRACKING_STOPPED', sessionStatus: 'stopped', lastSeenAt: new Date() } }
       );
     }
-    const payload = { employeeId: challenge.employeeId, challenge: publicChallenge(challenge), trackingBlocked: gate.blocked };
+    const payload = { organizationId: req.organizationId, employeeId: challenge.employeeId, challenge: publicChallenge(challenge), trackingBlocked: gate.blocked };
     emitVerificationEvent('employee:verification-cancelled', payload);
     return res.status(200).json({ success: true, message: 'Verification cancelled.', ...payload });
   } catch (error) {
@@ -117,10 +120,10 @@ const cancelVerification = async (req, res) => {
 
 const resetBiometricDevice = async (req, res) => {
   try {
-    if (!isAdmin(req)) return res.status(403).json({ success: false, message: 'Admin authorization required.' });
+    if (!isAdmin(req) || !hasPermission(req.user, 'verifications.manage')) return res.status(403).json({ success: false, message: 'Verification management permission required.' });
     const employeeId = String(req.params.employeeId || '').trim();
-    const deleted = await BiometricDevice.findOneAndDelete({ employeeId });
-    emitVerificationEvent('employee:verification-device-reset', { employeeId, deviceReset: true });
+    const deleted = await BiometricDevice.findOneAndDelete({ employeeId, organizationId: req.organizationId });
+    emitVerificationEvent('employee:verification-device-reset', { organizationId: req.organizationId, employeeId, deviceReset: true });
     return res.status(200).json({
       success: true,
       message: deleted ? 'Biometric device binding reset.' : 'No biometric device was registered for this employee.',
@@ -208,6 +211,7 @@ const completeVerification = async (req, res) => {
       await registered.save();
     } else {
       await BiometricDevice.create({
+        organizationId: req.organizationId,
         employeeId: req.user.employeeId,
         userId: req.user._id,
         deviceId,
@@ -228,7 +232,7 @@ const completeVerification = async (req, res) => {
         { $set: { trackingStatus: 'TRACKING_STOPPED', sessionStatus: 'stopped', lastSeenAt: now } }
       );
     }
-    const responsePayload = { employeeId: req.user.employeeId, challenge: publicChallenge(challenge), trackingBlocked: gate.blocked };
+    const responsePayload = { organizationId: req.organizationId, employeeId: req.user.employeeId, challenge: publicChallenge(challenge), trackingBlocked: gate.blocked };
     emitVerificationEvent('employee:verification-verified', responsePayload);
     return res.status(200).json({ success: true, message: wasLate ? 'Identity verified. Tracking can now be restarted.' : 'Identity verified successfully.', ...responsePayload });
   } catch (error) {

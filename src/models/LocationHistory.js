@@ -2,6 +2,7 @@ const mongoose = require('mongoose');
 
 const locationHistorySchema = new mongoose.Schema(
   {
+    organizationId: { type: mongoose.Schema.Types.ObjectId, ref: 'Organization', default: null, index: true },
     employeeId: {
       type: String,
       required: true,
@@ -38,5 +39,6 @@ const locationHistorySchema = new mongoose.Schema(
 locationHistorySchema.index({ employeeId: 1, clientLocationId: 1 }, { unique: true });
 locationHistorySchema.index({ location: '2dsphere' });
 locationHistorySchema.index({ employeeId: 1, timestamp: -1 });
+locationHistorySchema.index({ organizationId: 1, employeeId: 1, timestamp: -1 });
 
 module.exports = mongoose.model('LocationHistory', locationHistorySchema);

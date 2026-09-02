@@ -2,6 +2,7 @@ const mongoose = require('mongoose');
 
 const socialLinkSchema = new mongoose.Schema(
   {
+    organizationId: { type: mongoose.Schema.Types.ObjectId, ref: 'Organization', default: null, index: true },
     platform: { type: String, default: '' },
     value: { type: String, default: '' },
   },

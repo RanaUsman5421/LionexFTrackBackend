@@ -13,6 +13,8 @@ const generateToken = (user) => {
       username: user.username,
       email: user.email,
       role: user.role,
+      organizationId: user.organizationId || undefined,
+      adminRole: user.adminRole || undefined,
       authVersion: Number(user.authVersion || 0),
     },
     secretKey,

@@ -2,6 +2,7 @@ const mongoose = require('mongoose');
 
 const trackingSessionSchema = new mongoose.Schema(
   {
+    organizationId: { type: mongoose.Schema.Types.ObjectId, ref: 'Organization', default: null, index: true },
     employeeId: {
       type: String,
       required: true,
@@ -30,5 +31,6 @@ const trackingSessionSchema = new mongoose.Schema(
 );
 
 trackingSessionSchema.index({ employeeId: 1, startedAt: -1 });
+trackingSessionSchema.index({ organizationId: 1, employeeId: 1, startedAt: -1 });
 
 module.exports = mongoose.model('TrackingSession', trackingSessionSchema);

@@ -25,14 +25,14 @@ const singletonData = (snapshot = {}) => ({
   lastSyncedAtMs: Number(snapshot.lastSyncedAtMs || Date.now()),
 });
 
-const upsertRecords = async (Model, employeeId, records, idOf, extra = () => ({})) => {
+const upsertRecords = async (Model, employeeId, records, idOf, extra = () => ({}), organizationId) => {
   if (!records.length) return;
   await Model.bulkWrite(records.map((data, index) => {
     const entityId = String(idOf(data, index) || '').trim();
     return {
       updateOne: {
         filter: { employeeId, entityId },
-        update: { $set: { data, deletedAt: null, ...extra(data) } },
+        update: { $set: { data, deletedAt: null, ...extra(data), ...(organizationId ? { organizationId } : {}) } },
         upsert: true,
       },
     };
@@ -48,19 +48,19 @@ const softDeleteRecords = async (Model, employeeId, ids = []) => {
   );
 };
 
-const bumpVersion = async (employeeId, source = 'backend') => {
+const bumpVersion = async (employeeId, source = 'backend', organizationId) => {
   const metadata = await AppSyncMetadata.findOneAndUpdate(
     { employeeId },
-    { $inc: { version: 1 }, $setOnInsert: { lastLegacyUpdatedAt: null } },
+    { $inc: { version: 1 }, $set: organizationId ? { organizationId } : {}, $setOnInsert: { lastLegacyUpdatedAt: null } },
     { upsert: true, new: true, setDefaultsOnInsert: true }
   ).lean();
-  const payload = { employeeId, version: metadata.version, source, timestamp: new Date().toISOString() };
+  const payload = { organizationId, employeeId, version: metadata.version, source, timestamp: new Date().toISOString() };
   emitAppDataChanged(employeeId, metadata.version, source);
   emitAppDataUpdate(payload);
   return metadata;
 };
 
-const importLegacySnapshot = async (employeeId, snapshot, { force = false } = {}) => {
+const importLegacySnapshot = async (employeeId, snapshot, { force = false, organizationId = snapshot?.organizationId } = {}) => {
   if (!snapshot) return null;
   const metadata = await AppSyncMetadata.findOne({ employeeId }).lean();
   const snapshotUpdatedAt = new Date(snapshot.updatedAt || snapshot.lastSyncedAt || 0);
@@ -75,14 +75,14 @@ const importLegacySnapshot = async (employeeId, snapshot, { force = false } = {}
 
   await AppSyncState.findOneAndUpdate(
     { employeeId },
-    { $set: { data: singletonData(snapshot) } },
+    { $set: { data: singletonData(snapshot), ...(organizationId ? { organizationId } : {}) } },
     { upsert: true, new: true, setDefaultsOnInsert: true }
   );
-  await upsertRecords(LeadRecord, employeeId, leads, (lead) => lead.id);
+  await upsertRecords(LeadRecord, employeeId, leads, (lead) => lead.id, undefined, organizationId);
   await upsertRecords(FollowUpRecord, employeeId, followUps, (followUp) => followUp.id, (followUp) => ({
     leadId: String(followUp.leadId || '').trim(),
-  }));
-  await upsertRecords(ActivityRecord, employeeId, activities, activityId);
+  }), organizationId);
+  await upsertRecords(ActivityRecord, employeeId, activities, activityId, undefined, organizationId);
 
   if (metadata || force) {
     const currentLeadIds = leads.map((lead) => String(lead.id || '')).filter(Boolean);
@@ -108,7 +108,7 @@ const importLegacySnapshot = async (employeeId, snapshot, { force = false } = {}
     await softDeleteRecords(LeadRecord, employeeId, explicitDeletedLeadIds);
   }
 
-  const next = await bumpVersion(employeeId, 'legacy');
+  const next = await bumpVersion(employeeId, 'legacy', organizationId);
   return AppSyncMetadata.findOneAndUpdate(
     { employeeId },
     { $set: { lastLegacyUpdatedAt: snapshotUpdatedAt } },
@@ -151,12 +151,12 @@ const buildNormalizedSnapshot = async (employeeId) => {
   };
 };
 
-const materializeLegacySnapshot = async (employeeId) => {
+const materializeLegacySnapshot = async (employeeId, organizationId) => {
   const snapshot = await buildNormalizedSnapshot(employeeId);
   if (!snapshot) return null;
   const saved = await AppSnapshot.findOneAndUpdate(
     { employeeId },
-    { $set: { ...snapshot, lastSyncedAt: new Date() } },
+    { $set: { ...snapshot, ...(organizationId ? { organizationId } : {}), lastSyncedAt: new Date() } },
     { upsert: true, new: true, setDefaultsOnInsert: true }
   ).lean();
   await AppSyncMetadata.updateOne(
@@ -166,19 +166,19 @@ const materializeLegacySnapshot = async (employeeId) => {
   return saved;
 };
 
-const applyEntityDelta = async (employeeId, delta = {}) => {
+const applyEntityDelta = async (employeeId, delta = {}, organizationId) => {
   await reconcileLegacySnapshot(employeeId);
   const serverChangedAtMs = Date.now();
   if (delta.state && typeof delta.state === 'object') {
     await AppSyncState.findOneAndUpdate(
       { employeeId },
-      { $set: { data: { ...delta.state, lastSyncedAtMs: serverChangedAtMs } } },
+      { $set: { data: { ...delta.state, lastSyncedAtMs: serverChangedAtMs }, ...(organizationId ? { organizationId } : {}) } },
       { upsert: true, new: true, setDefaultsOnInsert: true }
     );
   } else {
     await AppSyncState.updateOne(
       { employeeId },
-      { $set: { 'data.lastSyncedAtMs': serverChangedAtMs } }
+      { $set: { 'data.lastSyncedAtMs': serverChangedAtMs, ...(organizationId ? { organizationId } : {}) } }
     );
   }
   const protectedSnapshot = await AppSnapshot.findOne({ employeeId })
@@ -191,7 +191,7 @@ const applyEntityDelta = async (employeeId, delta = {}) => {
   const safeLeadUpserts = (Array.isArray(delta.upsertLeads) ? delta.upsertLeads : [])
     .filter((lead) => !deletedLeadIds.has(lead?.id))
     .map((lead) => ({ ...lead, ...(leadAdminOverrides[lead.id] || {}) }));
-  await upsertRecords(LeadRecord, employeeId, safeLeadUpserts, (lead) => lead.id);
+  await upsertRecords(LeadRecord, employeeId, safeLeadUpserts, (lead) => lead.id, undefined, organizationId);
   await softDeleteRecords(LeadRecord, employeeId, delta.deleteLeadIds);
   const cascadedLeadDeletes = [...new Set([...(delta.deleteLeadIds || []), ...deletedLeadIds])];
   if (cascadedLeadDeletes.length) {
@@ -214,7 +214,8 @@ const applyEntityDelta = async (employeeId, delta = {}) => {
     employeeId,
     [...safeFollowUpUpserts, ...protectedFollowUps.values()],
     (followUp) => followUp.id,
-    (followUp) => ({ leadId: String(followUp.leadId || '').trim() })
+    (followUp) => ({ leadId: String(followUp.leadId || '').trim() }),
+    organizationId
   );
   await softDeleteRecords(
     FollowUpRecord,
@@ -225,12 +226,14 @@ const applyEntityDelta = async (employeeId, delta = {}) => {
     ActivityRecord,
     employeeId,
     Array.isArray(delta.upsertActivities) ? delta.upsertActivities : [],
-    activityId
+    activityId,
+    undefined,
+    organizationId
   );
   await softDeleteRecords(ActivityRecord, employeeId, delta.deleteActivityIds);
 
-  const metadata = await bumpVersion(employeeId, 'entity-sync');
-  const snapshot = await materializeLegacySnapshot(employeeId);
+  const metadata = await bumpVersion(employeeId, 'entity-sync', organizationId);
+  const snapshot = await materializeLegacySnapshot(employeeId, organizationId);
   return { version: metadata.version, snapshot };
 };
 

@@ -9,7 +9,9 @@ const appDataRoutes = require('./src/routes/appDataRoutes');
 const locationRoutes = require('./src/routes/locationRoutes');
 const trackingRoutes = require('./src/routes/trackingRoutes');
 const verificationRoutes = require('./src/routes/verificationRoutes');
+const invitationRoutes = require('./src/routes/invitationRoutes');
 const { initializeSocket } = require('./src/services/socketService');
+const { ensureLegacyOrganization } = require('./src/services/organizationBootstrapService');
 
 dotenv.config();
 
@@ -46,9 +48,11 @@ app.use('/api/app-data', appDataRoutes);
 app.use('/api/locations', locationRoutes);
 app.use('/api/tracking', trackingRoutes);
 app.use('/api/verifications', verificationRoutes);
+app.use('/api/invitations', invitationRoutes);
 
 const startServer = async () => {
   await connectDB();
+  await ensureLegacyOrganization();
 
   initializeSocket(server);
 

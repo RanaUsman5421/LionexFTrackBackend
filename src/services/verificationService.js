@@ -61,12 +61,13 @@ const markEmployeeVerificationRequired = async (employeeId, challenge) => {
     ),
   ]);
   const payload = {
+    organizationId: challenge.organizationId,
     employeeId,
     challenge: publicChallenge(challenge),
     trackingBlocked: true,
     timestamp: now,
   };
-  emitTrackingStatus({ employeeId, status: 'verification_required', trackingStatus: 'VERIFICATION_REQUIRED', timestamp: now });
+  emitTrackingStatus({ organizationId: challenge.organizationId, employeeId, status: 'verification_required', trackingStatus: 'VERIFICATION_REQUIRED', timestamp: now });
   emitVerificationEvent('employee:verification-missed', payload);
 };
 
