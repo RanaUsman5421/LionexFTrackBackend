@@ -103,7 +103,7 @@ const buildTravelReport = async (type, organizationId, range, req, employeeId, g
     ? [...periodColumns, { key: 'employee', label: 'Employee' }, { key: 'employeeId', label: 'Employee ID' }, { key: 'distanceKm', label: 'Distance', format: 'km' }, { key: 'liters', label: 'Petrol', format: 'liters' }, ...(fuelPrice ? [{ key: 'fuelCost', label: 'Fuel Cost', format: 'currency' }, { key: 'costPerKm', label: 'Cost / km', format: 'currency' }] : [])]
     : [...periodColumns, { key: 'employee', label: 'Employee' }, { key: 'employeeId', label: 'Employee ID' }, { key: 'distanceKm', label: 'Distance', format: 'km' }, { key: 'points', label: 'GPS Points' }, { key: 'firstSeen', label: 'First Point', format: 'datetime' }, { key: 'lastSeen', label: 'Last Point', format: 'datetime' }];
   return response(type, titles[type], range, columns, fuelType ? fuelRows : rows, [
-    { label: 'Employees', value: rows.length }, { label: 'Total distance', value: Number(totalDistance.toFixed(2)), format: 'km' },
+    { label: 'Records', value: rows.length }, { label: 'Total distance', value: Number(totalDistance.toFixed(2)), format: 'km' },
     ...(fuelType ? [{ label: 'Petrol consumed', value: Number((totalDistance / efficiency).toFixed(2)), format: 'liters' }] : []),
     ...(fuelPrice ? [{ label: 'Estimated cost', value: Number((totalDistance / efficiency * fuelPrice).toFixed(2)), format: 'currency' }] : []),
   ]);
