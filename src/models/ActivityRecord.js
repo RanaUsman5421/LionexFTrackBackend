@@ -13,5 +13,6 @@ const activityRecordSchema = new mongoose.Schema(
 
 activityRecordSchema.index({ employeeId: 1, entityId: 1 }, { unique: true });
 activityRecordSchema.index({ organizationId: 1, employeeId: 1, deletedAt: 1 });
+activityRecordSchema.index({ organizationId: 1, deletedAt: 1, createdAt: -1 });
 
 module.exports = mongoose.model('ActivityRecord', activityRecordSchema);

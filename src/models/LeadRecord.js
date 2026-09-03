@@ -13,5 +13,6 @@ const leadRecordSchema = new mongoose.Schema(
 
 leadRecordSchema.index({ employeeId: 1, entityId: 1 }, { unique: true });
 leadRecordSchema.index({ organizationId: 1, employeeId: 1, deletedAt: 1 });
+leadRecordSchema.index({ organizationId: 1, deletedAt: 1, createdAt: -1 });
 
 module.exports = mongoose.model('LeadRecord', leadRecordSchema);

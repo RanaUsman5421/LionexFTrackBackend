@@ -40,5 +40,6 @@ locationHistorySchema.index({ employeeId: 1, clientLocationId: 1 }, { unique: tr
 locationHistorySchema.index({ location: '2dsphere' });
 locationHistorySchema.index({ employeeId: 1, timestamp: -1 });
 locationHistorySchema.index({ organizationId: 1, employeeId: 1, timestamp: -1 });
+locationHistorySchema.index({ organizationId: 1, timestamp: 1, employeeId: 1 });
 
 module.exports = mongoose.model('LocationHistory', locationHistorySchema);

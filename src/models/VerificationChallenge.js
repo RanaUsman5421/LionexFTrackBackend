@@ -32,5 +32,6 @@ const verificationChallengeSchema = new mongoose.Schema(
 
 verificationChallengeSchema.index({ employeeId: 1, status: 1, scheduledAt: -1 });
 verificationChallengeSchema.index({ organizationId: 1, employeeId: 1, status: 1, scheduledAt: -1 });
+verificationChallengeSchema.index({ organizationId: 1, scheduledAt: -1, status: 1 });
 
 module.exports = mongoose.model('VerificationChallenge', verificationChallengeSchema);

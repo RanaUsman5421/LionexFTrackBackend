@@ -14,5 +14,6 @@ const followUpRecordSchema = new mongoose.Schema(
 
 followUpRecordSchema.index({ employeeId: 1, entityId: 1 }, { unique: true });
 followUpRecordSchema.index({ organizationId: 1, employeeId: 1, deletedAt: 1 });
+followUpRecordSchema.index({ organizationId: 1, deletedAt: 1, createdAt: -1 });
 
 module.exports = mongoose.model('FollowUpRecord', followUpRecordSchema);
