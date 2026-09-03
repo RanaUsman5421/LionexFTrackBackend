@@ -13,6 +13,24 @@ const {
 } = require('../services/locationService');
 const { emitLocationUpdate } = require('../services/socketService');
 const { getVerificationGate, publicChallenge, wasTimestampVerificationBlocked } = require('../services/verificationService');
+const LocationHistory = require('../models/LocationHistory');
+const User = require('../models/User');
+const { hasPermission } = require('../utils/adminPermissions');
+
+const leaderboardCache = new Map();
+const LEADERBOARD_CACHE_MS = 60_000;
+const toRadians = (value) => (value * Math.PI) / 180;
+const distanceKmBetween = (left, right) => {
+  const earthRadiusKm = 6371;
+  const latitudeDelta = toRadians(right.latitude - left.latitude);
+  const longitudeDelta = toRadians(right.longitude - left.longitude);
+  const latitude1 = toRadians(left.latitude);
+  const latitude2 = toRadians(right.latitude);
+  const a = Math.sin(latitudeDelta / 2) ** 2
+    + Math.cos(latitude1) * Math.cos(latitude2) * Math.sin(longitudeDelta / 2) ** 2;
+  return 2 * earthRadiusKm * Math.asin(Math.min(1, Math.sqrt(a)));
+};
+const invalidateLeaderboard = (organizationId) => leaderboardCache.delete(String(organizationId || ''));
 
 const rejectWhenVerificationRequired = async (req, res) => {
   const gate = await getVerificationGate(req.user.employeeId);
@@ -82,6 +100,7 @@ const submitLocation = async (req, res) => {
 
     const employeeId = req.user.employeeId;
     const historyDoc = await storeHistoryLocation(employeeId, validated.data, req.organizationId);
+    if (historyDoc) invalidateLeaderboard(req.organizationId);
     const currentDoc = await upsertCurrentLocationIfNewer(employeeId, validated.data, 'active', req.organizationId);
     await touchTrackingSession(employeeId, validated.data.timestamp);
 
@@ -130,6 +149,7 @@ const submitLocationBulk = async (req, res) => {
       }
 
       const historyDoc = await storeHistoryLocation(employeeId, data, req.organizationId);
+      if (historyDoc) invalidateLeaderboard(req.organizationId);
       const currentDoc = await upsertCurrentLocationIfNewer(employeeId, data, 'active', req.organizationId);
       await touchTrackingSession(employeeId, data.timestamp);
       processed.push(data.clientLocationId);
@@ -227,6 +247,83 @@ const getHistoryController = async (req, res) => {
   }
 };
 
+const getDistanceLeaderboardController = async (req, res) => {
+  try {
+    if (req.principalType !== 'admin' || !hasPermission(req.user, 'tracking.read')) {
+      return res.status(403).json({ success: false, message: 'Not authorized to view distance rankings.' });
+    }
+    const limit = Math.min(10, Math.max(1, Number(req.query.limit) || 4));
+    const cacheKey = String(req.organizationId);
+    const cached = leaderboardCache.get(cacheKey);
+    if (cached && Date.now() - cached.createdAt < LEADERBOARD_CACHE_MS) {
+      return res.json({ success: true, leaders: cached.leaders.slice(0, limit) });
+    }
+
+    const totals = new Map();
+    const previousByEmployee = new Map();
+    const cursor = LocationHistory.find({ organizationId: req.organizationId })
+      .select('employeeId location.coordinates timestamp -_id')
+      .sort({ employeeId: 1, timestamp: 1 })
+      .lean()
+      .cursor();
+
+    for await (const row of cursor) {
+      const coordinates = row.location?.coordinates;
+      const longitude = Number(coordinates?.[0]);
+      const latitude = Number(coordinates?.[1]);
+      const timestamp = new Date(row.timestamp);
+      if (!row.employeeId || !Number.isFinite(latitude) || !Number.isFinite(longitude) || Number.isNaN(timestamp.getTime())) continue;
+      const current = { latitude, longitude, day: timestamp.toISOString().slice(0, 10) };
+      const previous = previousByEmployee.get(row.employeeId);
+      if (previous && previous.day === current.day) {
+        const segmentKm = distanceKmBetween(previous, current);
+        if (Number.isFinite(segmentKm)) totals.set(row.employeeId, (totals.get(row.employeeId) || 0) + segmentKm);
+      }
+      previousByEmployee.set(row.employeeId, current);
+    }
+
+    const ranked = [...totals.entries()].sort((left, right) => right[1] - left[1]).slice(0, 10);
+    const employeeIds = ranked.map(([employeeId]) => employeeId);
+    const employees = await User.find({ organizationId: req.organizationId, employeeId: { $in: employeeIds } })
+      .select('employeeId fullName username role profilePhotoUrl')
+      .lean();
+    const employeeById = new Map(employees.map((employee) => [employee.employeeId, employee]));
+    const leaders = ranked.map(([employeeId, totalDistanceKm]) => {
+      const employee = employeeById.get(employeeId) || {};
+      return {
+        employeeId,
+        fullName: employee.fullName || employee.username || employeeId,
+        role: employee.role || 'Employee',
+        profilePhotoUrl: employee.profilePhotoUrl || '',
+        totalDistanceKm: Number(totalDistanceKm.toFixed(2)),
+      };
+    });
+    if (leaders.length < 10) {
+      const zeroDistanceEmployees = await User.find({
+        organizationId: req.organizationId,
+        employeeId: { $nin: employeeIds },
+        approvalStatus: 'approved',
+        accountStatus: 'active',
+      })
+        .select('employeeId fullName username role profilePhotoUrl')
+        .sort({ createdAt: 1 })
+        .limit(10 - leaders.length)
+        .lean();
+      leaders.push(...zeroDistanceEmployees.map((employee) => ({
+        employeeId: employee.employeeId,
+        fullName: employee.fullName || employee.username || employee.employeeId,
+        role: employee.role || 'Employee',
+        profilePhotoUrl: employee.profilePhotoUrl || '',
+        totalDistanceKm: 0,
+      })));
+    }
+    leaderboardCache.set(cacheKey, { createdAt: Date.now(), leaders });
+    return res.json({ success: true, leaders: leaders.slice(0, limit) });
+  } catch (error) {
+    return res.status(500).json({ success: false, message: error.message || 'Failed to calculate distance rankings.' });
+  }
+};
+
 const heartbeatLocation = async (req, res) => {
   try {
     if (await rejectWhenVerificationRequired(req, res)) return;
@@ -272,6 +369,7 @@ module.exports = {
   submitLocation,
   submitLocationBulk,
   getCurrentLocationsController,
+  getDistanceLeaderboardController,
   getHistoryController,
   heartbeatLocation,
 };
