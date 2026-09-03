@@ -29,7 +29,7 @@ const dateRange = (req) => {
   return { from, to };
 };
 const GROUP_BY_VALUES = new Set(['summary', 'day', 'week', 'month', 'detailed']);
-const normalizeGroupBy = (value) => GROUP_BY_VALUES.has(value) ? value : 'summary';
+const normalizeGroupBy = (value) => GROUP_BY_VALUES.has(value) ? value : 'detailed';
 const isPeriodGrouping = (groupBy) => ['day', 'week', 'month'].includes(groupBy);
 const periodStart = (value, groupBy) => {
   const date = new Date(value);
@@ -39,7 +39,7 @@ const periodStart = (value, groupBy) => {
   if (groupBy === 'month') start.setUTCDate(1);
   return start.toISOString().slice(0, 10);
 };
-const periodColumn = { key: 'period', label: 'Period' };
+const periodColumn = { key: 'period', label: 'Period', format: 'date' };
 const employeeDirectory = async (organizationId, employeeIds = []) => {
   if (!employeeIds.length) return new Map();
   const query = { organizationId };
@@ -112,9 +112,9 @@ const buildTravelReport = async (type, organizationId, range, req, employeeId, g
 const buildWorkforceReport = async (type, organizationId, range, employeeId, groupBy) => {
   const sessionQuery = { organizationId, startedAt: { $lte: range.to }, $or: [{ endedAt: null }, { endedAt: { $gte: range.from } }] };
   if (employeeId) sessionQuery.employeeId = employeeId;
-  const sessions = await TrackingSession.find(sessionQuery).sort({ startedAt: 1 }).lean();
   const metrics = new Map();
-  sessions.forEach((session) => {
+  const sessionCursor = TrackingSession.find(sessionQuery).select('employeeId startedAt endedAt lastHeartbeatAt -_id').sort({ startedAt: 1 }).lean().cursor({ batchSize: 1000 });
+  for await (const session of sessionCursor) {
     const start = new Date(Math.max(new Date(session.startedAt).getTime(), range.from.getTime()));
     const end = new Date(Math.min(new Date(session.endedAt || session.lastHeartbeatAt || range.to).getTime(), range.to.getTime()));
     const period = isPeriodGrouping(groupBy) ? periodStart(session.startedAt, groupBy) : '';
@@ -125,7 +125,7 @@ const buildWorkforceReport = async (type, organizationId, range, employeeId, gro
     if (new Date(session.startedAt).getHours() >= 10) row.lateStarts += 1;
     row.overtimeMs += Math.max(0, duration - 8 * 3600000);
     metrics.set(metricKey, row);
-  });
+  }
   const rankedMetrics = [...metrics.values()].sort((left, right) => left.period && right.period ? left.period.localeCompare(right.period) || right.dutyMs - left.dutyMs : right.dutyMs - left.dutyMs).slice(0, MAX_ROWS + 1);
   const directory = await employeeDirectory(organizationId, [...new Set(rankedMetrics.map((metric) => metric.employeeId))]);
   const rows = rankedMetrics.map((metric) => ({ ...identity(directory, metric.employeeId), ...(metric.period ? { period: metric.period } : {}), dutyMs: metric.dutyMs, fieldDays: metric.fieldDays.size, sessions: metric.sessions, lateStarts: metric.lateStarts, overtimeMs: metric.overtimeMs }));
@@ -137,52 +137,62 @@ const buildFieldReport = async (type, organizationId, range, employeeId, groupBy
   const query = { organizationId, deletedAt: null, createdAt: { $gte: range.from, $lte: range.to } };
   if (employeeId) query.employeeId = employeeId;
   if (['leads', 'lead_conversion', 'area_performance'].includes(type)) {
-    const documents = await LeadRecord.find(query).sort({ createdAt: -1 }).limit(MAX_ROWS + 1).lean();
-    const directory = await employeeDirectory(organizationId, [...new Set(documents.map((row) => row.employeeId))]);
-    const detailedRows = documents.map((row) => ({ ...identity(directory, row.employeeId), brand: text(row.data?.brand || row.data?.name, 'Untitled lead'), status: text(row.data?.status, 'New'), leadType: text(row.data?.leadType || row.data?.type), createdAt: row.createdAt }));
-    let rows = detailedRows;
-    let columns = [{ key: 'brand', label: 'Lead' }, { key: 'employee', label: 'Employee' }, { key: 'area', label: 'Area' }, { key: 'status', label: 'Status' }, { key: 'leadType', label: 'Type' }, { key: 'createdAt', label: 'Created', format: 'datetime' }];
-    if (groupBy !== 'detailed') {
-      const grouped = new Map();
-      detailedRows.forEach((row) => {
-        const period = isPeriodGrouping(groupBy) ? periodStart(row.createdAt, groupBy) : '';
-        const key = `${row.employeeId}\u0000${period}`;
-        const item = grouped.get(key) || { ...identity(directory, row.employeeId), ...(period ? { period } : {}), total: 0, registered: 0 };
-        item.total += 1;
-        if (row.status === 'Registered') item.registered += 1;
-        grouped.set(key, item);
-      });
-      rows = [...grouped.values()].map((row) => ({ ...row, conversion: row.total ? Number((row.registered / row.total * 100).toFixed(1)) : 0 })).sort((a, b) => (a.period || '').localeCompare(b.period || '') || b.total - a.total);
-      columns = [...(isPeriodGrouping(groupBy) ? [periodColumn] : []), { key: 'employee', label: 'Employee' }, { key: 'area', label: 'Area' }, { key: 'total', label: 'Total Leads' }, { key: 'registered', label: 'Registered' }, { key: 'conversion', label: 'Conversion', format: 'percent' }];
+    if (groupBy === 'detailed') {
+      const documents = await LeadRecord.find(query).sort({ createdAt: -1 }).limit(MAX_ROWS + 1).lean();
+      const directory = await employeeDirectory(organizationId, [...new Set(documents.map((row) => row.employeeId))]);
+      const rows = documents.map((row) => ({ ...identity(directory, row.employeeId), brand: text(row.data?.brand || row.data?.name, 'Untitled lead'), status: text(row.data?.status, 'New'), leadType: text(row.data?.leadType || row.data?.type), createdAt: row.createdAt }));
+      const totalRegistered = rows.filter((row) => row.status === 'Registered').length;
+      return response(type, type === 'leads' ? 'Leads Report' : type === 'lead_conversion' ? 'Lead Conversion Report' : 'Area-wise Performance Report', range, [{ key: 'brand', label: 'Lead' }, { key: 'employee', label: 'Employee' }, { key: 'area', label: 'Area' }, { key: 'status', label: 'Status' }, { key: 'leadType', label: 'Type' }, { key: 'createdAt', label: 'Created', format: 'datetime' }], rows, [{ label: 'Total leads', value: rows.length }, { label: 'Registered', value: totalRegistered }, { label: 'Conversion', value: rows.length ? Number((totalRegistered / rows.length * 100).toFixed(1)) : 0, format: 'percent' }]);
     }
-    const registered = rows.filter((row) => row.status === 'Registered').length;
-    const totalLeads = detailedRows.length;
-    const totalRegistered = detailedRows.filter((row) => row.status === 'Registered').length;
+    const grouped = new Map();
+    const employeeIds = new Set();
+    let totalLeads = 0;
+    let totalRegistered = 0;
+    const cursor = LeadRecord.find(query).select('employeeId data.status createdAt -_id').sort({ createdAt: 1 }).lean().cursor({ batchSize: 1000 });
+    for await (const document of cursor) {
+      const period = isPeriodGrouping(groupBy) ? periodStart(document.createdAt, groupBy) : '';
+      const key = `${document.employeeId}\u0000${period}`;
+      const item = grouped.get(key) || { employeeId: document.employeeId, ...(period ? { period } : {}), total: 0, registered: 0 };
+      item.total += 1;
+      totalLeads += 1;
+      if (text(document.data?.status) === 'Registered') { item.registered += 1; totalRegistered += 1; }
+      employeeIds.add(document.employeeId);
+      grouped.set(key, item);
+    }
+    const directory = await employeeDirectory(organizationId, [...employeeIds]);
+    const rows = [...grouped.values()].map((row) => ({ ...identity(directory, row.employeeId), ...row, conversion: row.total ? Number((row.registered / row.total * 100).toFixed(1)) : 0 })).sort((a, b) => (a.period || '').localeCompare(b.period || '') || b.total - a.total);
+    const columns = [...(isPeriodGrouping(groupBy) ? [periodColumn] : []), { key: 'employee', label: 'Employee' }, { key: 'area', label: 'Area' }, { key: 'total', label: 'Total Leads' }, { key: 'registered', label: 'Registered' }, { key: 'conversion', label: 'Conversion', format: 'percent' }];
     return response(type, type === 'leads' ? 'Leads Report' : type === 'lead_conversion' ? 'Lead Conversion Report' : 'Area-wise Performance Report', range, columns, rows, [{ label: 'Total leads', value: totalLeads }, { label: 'Registered', value: totalRegistered }, { label: 'Conversion', value: totalLeads ? Number((totalRegistered / totalLeads * 100).toFixed(1)) : 0, format: 'percent' }]);
   }
   const Model = type === 'follow_ups' ? FollowUpRecord : ActivityRecord;
-  let documents = await Model.find(query).sort({ createdAt: -1 }).limit(MAX_ROWS + 1).lean();
-  if (type === 'meetings_visits') documents = documents.filter((row) => /meeting|visit/i.test(text(row.data?.type || row.data?.title || row.data?.activityType)));
-  const directory = await employeeDirectory(organizationId, [...new Set(documents.map((row) => row.employeeId))]);
-  const detailedRows = documents.map((row) => ({ ...identity(directory, row.employeeId), activity: text(row.data?.title || row.data?.type || row.data?.activityType, type === 'follow_ups' ? 'Follow-up' : 'Activity'), status: text(row.data?.status || row.data?.result), notes: text(row.data?.notes || row.data?.description), createdAt: row.createdAt }));
-  let rows = detailedRows;
-  let columns = [{ key: 'employee', label: 'Employee' }, { key: 'employeeId', label: 'Employee ID' }, { key: 'activity', label: 'Activity' }, { key: 'status', label: 'Status' }, { key: 'notes', label: 'Notes' }, { key: 'createdAt', label: 'Created', format: 'datetime' }];
-  if (groupBy !== 'detailed') {
-    const grouped = new Map();
-    detailedRows.forEach((row) => {
-      const period = isPeriodGrouping(groupBy) ? periodStart(row.createdAt, groupBy) : '';
-      const key = `${row.employeeId}\u0000${period}`;
-      const item = grouped.get(key) || { ...identity(directory, row.employeeId), ...(period ? { period } : {}), records: 0 };
-      item.records += 1;
-      grouped.set(key, item);
-    });
-    rows = [...grouped.values()].sort((a, b) => (a.period || '').localeCompare(b.period || '') || b.records - a.records);
-    columns = [...(isPeriodGrouping(groupBy) ? [periodColumn] : []), { key: 'employee', label: 'Employee' }, { key: 'employeeId', label: 'Employee ID' }, { key: 'records', label: 'Records' }];
+  if (groupBy === 'detailed') {
+    let documents = await Model.find(query).sort({ createdAt: -1 }).limit(MAX_ROWS + 1).lean();
+    if (type === 'meetings_visits') documents = documents.filter((row) => /meeting|visit/i.test(text(row.data?.type || row.data?.title || row.data?.activityType)));
+    const directory = await employeeDirectory(organizationId, [...new Set(documents.map((row) => row.employeeId))]);
+    const rows = documents.map((row) => ({ ...identity(directory, row.employeeId), activity: text(row.data?.title || row.data?.type || row.data?.activityType, type === 'follow_ups' ? 'Follow-up' : 'Activity'), status: text(row.data?.status || row.data?.result), notes: text(row.data?.notes || row.data?.description), createdAt: row.createdAt }));
+    return response(type, type === 'follow_ups' ? 'Follow-up Report' : type === 'meetings_visits' ? 'Meetings / Visits Report' : 'Activity Report', range, [{ key: 'employee', label: 'Employee' }, { key: 'employeeId', label: 'Employee ID' }, { key: 'activity', label: 'Activity' }, { key: 'status', label: 'Status' }, { key: 'notes', label: 'Notes' }, { key: 'createdAt', label: 'Created', format: 'datetime' }], rows, [{ label: 'Records', value: rows.length }, { label: 'Employees', value: new Set(rows.map((row) => row.employeeId)).size }]);
   }
-  return response(type, type === 'follow_ups' ? 'Follow-up Report' : type === 'meetings_visits' ? 'Meetings / Visits Report' : 'Activity Report', range, columns, rows, [{ label: 'Records', value: detailedRows.length }, { label: 'Employees', value: new Set(detailedRows.map((row) => row.employeeId)).size }]);
+  const grouped = new Map();
+  const employeeIds = new Set();
+  let totalRecords = 0;
+  const cursor = Model.find(query).select('employeeId data createdAt -_id').sort({ createdAt: 1 }).lean().cursor({ batchSize: 1000 });
+  for await (const document of cursor) {
+    if (type === 'meetings_visits' && !/meeting|visit/i.test(text(document.data?.type || document.data?.title || document.data?.activityType))) continue;
+    const period = isPeriodGrouping(groupBy) ? periodStart(document.createdAt, groupBy) : '';
+    const key = `${document.employeeId}\u0000${period}`;
+    const item = grouped.get(key) || { employeeId: document.employeeId, ...(period ? { period } : {}), records: 0 };
+    item.records += 1;
+    totalRecords += 1;
+    employeeIds.add(document.employeeId);
+    grouped.set(key, item);
+  }
+  const directory = await employeeDirectory(organizationId, [...employeeIds]);
+  const rows = [...grouped.values()].map((row) => ({ ...identity(directory, row.employeeId), ...row })).sort((a, b) => (a.period || '').localeCompare(b.period || '') || b.records - a.records);
+  const columns = [...(isPeriodGrouping(groupBy) ? [periodColumn] : []), { key: 'employee', label: 'Employee' }, { key: 'employeeId', label: 'Employee ID' }, { key: 'records', label: 'Records' }];
+  return response(type, type === 'follow_ups' ? 'Follow-up Report' : type === 'meetings_visits' ? 'Meetings / Visits Report' : 'Activity Report', range, columns, rows, [{ label: 'Records', value: totalRecords }, { label: 'Employees', value: employeeIds.size }]);
 };
 
-const buildSecurityReport = async (type, organizationId, range, employeeId) => {
+const buildSecurityReport = async (type, organizationId, range, employeeId, groupBy) => {
   if (type === 'suspicious_activity') return unavailable(type, 'Suspicious Activity Report', range, 'Suspicious-event scoring is not available in the current data model.');
   if (type === 'blocked_accounts') {
     const userQuery = { organizationId, accountStatus: { $in: ['blocked', 'inactive'] } };
@@ -202,10 +212,34 @@ const buildSecurityReport = async (type, organizationId, range, employeeId) => {
   const query = { organizationId, scheduledAt: { $gte: range.from, $lte: range.to } };
   if (employeeId) query.employeeId = employeeId;
   if (type === 'missed_verification') query.status = 'missed';
-  const challenges = await VerificationChallenge.find(query).sort({ scheduledAt: -1 }).limit(MAX_ROWS + 1).lean();
-  const directory = await employeeDirectory(organizationId, [...new Set(challenges.map((row) => row.employeeId))]);
-  const rows = challenges.map((row) => ({ ...identity(directory, row.employeeId), status: row.status, scheduledAt: row.scheduledAt, attempts: row.attempts, verifiedLate: row.verifiedLate ? 'Yes' : 'No' }));
-  return response(type, type === 'missed_verification' ? 'Missed Verification Report' : 'Verification & Compliance Report', range, [{ key: 'employee', label: 'Employee' }, { key: 'employeeId', label: 'Employee ID' }, { key: 'status', label: 'Status' }, { key: 'scheduledAt', label: 'Scheduled', format: 'datetime' }, { key: 'attempts', label: 'Attempts' }, { key: 'verifiedLate', label: 'Verified Late' }], rows, [{ label: 'Checks', value: rows.length }, { label: 'Verified', value: rows.filter((row) => row.status === 'verified').length }, { label: 'Missed', value: rows.filter((row) => row.status === 'missed').length }]);
+  if (groupBy === 'detailed') {
+    const challenges = await VerificationChallenge.find(query).sort({ scheduledAt: -1 }).limit(MAX_ROWS + 1).lean();
+    const directory = await employeeDirectory(organizationId, [...new Set(challenges.map((row) => row.employeeId))]);
+    const rows = challenges.map((row) => ({ ...identity(directory, row.employeeId), status: row.status, scheduledAt: row.scheduledAt, attempts: row.attempts, verifiedLate: row.verifiedLate ? 'Yes' : 'No' }));
+    return response(type, type === 'missed_verification' ? 'Missed Verification Report' : 'Verification & Compliance Report', range, [{ key: 'employee', label: 'Employee' }, { key: 'employeeId', label: 'Employee ID' }, { key: 'status', label: 'Status' }, { key: 'scheduledAt', label: 'Scheduled', format: 'datetime' }, { key: 'attempts', label: 'Attempts' }, { key: 'verifiedLate', label: 'Verified Late' }], rows, [{ label: 'Checks', value: rows.length }, { label: 'Verified', value: rows.filter((row) => row.status === 'verified').length }, { label: 'Missed', value: rows.filter((row) => row.status === 'missed').length }]);
+  }
+  const grouped = new Map();
+  const employeeIds = new Set();
+  const totals = { checks: 0, verified: 0, missed: 0 };
+  const cursor = VerificationChallenge.find(query).select('employeeId status scheduledAt attempts -_id').sort({ scheduledAt: 1 }).lean().cursor({ batchSize: 1000 });
+  for await (const challenge of cursor) {
+    const period = isPeriodGrouping(groupBy) ? periodStart(challenge.scheduledAt, groupBy) : '';
+    const key = `${challenge.employeeId}\u0000${period}`;
+    const item = grouped.get(key) || { employeeId: challenge.employeeId, ...(period ? { period } : {}), checks: 0, verified: 0, missed: 0, attempts: 0 };
+    item.checks += 1;
+    item.verified += challenge.status === 'verified' ? 1 : 0;
+    item.missed += challenge.status === 'missed' ? 1 : 0;
+    item.attempts += number(challenge.attempts);
+    totals.checks += 1;
+    totals.verified += challenge.status === 'verified' ? 1 : 0;
+    totals.missed += challenge.status === 'missed' ? 1 : 0;
+    employeeIds.add(challenge.employeeId);
+    grouped.set(key, item);
+  }
+  const directory = await employeeDirectory(organizationId, [...employeeIds]);
+  const rows = [...grouped.values()].map((row) => ({ ...identity(directory, row.employeeId), ...row })).sort((a, b) => (a.period || '').localeCompare(b.period || '') || b.checks - a.checks);
+  const columns = [...(isPeriodGrouping(groupBy) ? [periodColumn] : []), { key: 'employee', label: 'Employee' }, { key: 'employeeId', label: 'Employee ID' }, { key: 'checks', label: 'Checks' }, { key: 'verified', label: 'Verified' }, { key: 'missed', label: 'Missed' }, { key: 'attempts', label: 'Attempts' }];
+  return response(type, type === 'missed_verification' ? 'Missed Verification Report' : 'Verification & Compliance Report', range, columns, rows, [{ label: 'Checks', value: totals.checks }, { label: 'Verified', value: totals.verified }, { label: 'Missed', value: totals.missed }]);
 };
 
 const getReport = async (req, res) => {
@@ -214,9 +248,10 @@ const getReport = async (req, res) => {
     const range = dateRange(req);
     if (!range) return res.status(400).json({ success: false, message: 'A valid date range of up to 366 days is required.' });
     const type = text(req.query.type).trim();
+    const groupBy = normalizeGroupBy(text(req.query.groupBy).trim());
     const employeeId = text(req.query.employeeId).trim().slice(0, 100);
     if (employeeId && !await User.exists({ organizationId: req.organizationId, employeeId })) return res.status(404).json({ success: false, message: 'Employee not found in this organization.' });
-    const cacheKey = [req.organizationId, type, employeeId, range.from.toISOString(), range.to.toISOString(), req.query.kmPerLiter || '', req.query.fuelPrice || ''].join('|');
+    const cacheKey = [req.organizationId, type, employeeId, groupBy, range.from.toISOString(), range.to.toISOString(), req.query.kmPerLiter || '', req.query.fuelPrice || ''].join('|');
     const cached = reportCache.get(cacheKey);
     if (cached && Date.now() - cached.createdAt < REPORT_CACHE_TTL_MS) return res.json({ success: true, report: cached.report, cached: true });
     const travel = ['distance', 'route_history', 'petrol_consumption', 'fuel_cost', 'cost_per_km', 'cost_per_employee'];
@@ -224,10 +259,10 @@ const getReport = async (req, res) => {
     const field = ['leads', 'lead_conversion', 'follow_ups', 'meetings_visits', 'activity', 'area_performance'];
     const security = ['verification', 'missed_verification', 'tracking_interruptions', 'suspicious_activity', 'blocked_accounts'];
     let report;
-    if (travel.includes(type)) report = await buildTravelReport(type, req.organizationId, range, req, employeeId);
-    else if (workforce.includes(type)) report = await buildWorkforceReport(type, req.organizationId, range, employeeId);
-    else if (field.includes(type)) report = await buildFieldReport(type, req.organizationId, range, employeeId);
-    else if (security.includes(type)) report = await buildSecurityReport(type, req.organizationId, range, employeeId);
+    if (travel.includes(type)) report = await buildTravelReport(type, req.organizationId, range, req, employeeId, groupBy);
+    else if (workforce.includes(type)) report = await buildWorkforceReport(type, req.organizationId, range, employeeId, groupBy);
+    else if (field.includes(type)) report = await buildFieldReport(type, req.organizationId, range, employeeId, groupBy);
+    else if (security.includes(type)) report = await buildSecurityReport(type, req.organizationId, range, employeeId, groupBy);
     else if (type === 'live_tracking' || type === 'area_coverage') {
       const locationQuery = { organizationId: req.organizationId };
       if (employeeId) locationQuery.employeeId = employeeId;
@@ -236,6 +271,7 @@ const getReport = async (req, res) => {
       const rows = locations.map((row) => ({ ...identity(directory, row.employeeId), status: row.trackingStatus, latitude: row.location?.coordinates?.[1], longitude: row.location?.coordinates?.[0], lastSeenAt: row.lastSeenAt || row.updatedAt }));
       report = response(type, type === 'live_tracking' ? 'Live Tracking Summary' : 'Location / Area Coverage Report', range, [{ key: 'employee', label: 'Employee' }, { key: 'employeeId', label: 'Employee ID' }, { key: 'area', label: 'Area' }, { key: 'city', label: 'City' }, { key: 'status', label: 'Status' }, { key: 'lastSeenAt', label: 'Last Seen', format: 'datetime' }], rows, [{ label: 'Employees located', value: rows.length }, { label: 'Active', value: rows.filter((row) => row.status === 'ACTIVE').length }]);
     } else report = unavailable(type, 'Report', range, 'This report is not available yet.');
+    report = { ...report, groupBy };
     if (employeeId && Array.isArray(report.rows)) {
       const scopedRows = report.rows.filter((row) => text(row.employeeId).trim() === employeeId);
       const removedForeignRows = scopedRows.length !== report.rows.length;
