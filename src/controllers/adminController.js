@@ -58,7 +58,7 @@ const sanitizeUser = (user, metrics = {}) => ({
   updatedAt: user.updatedAt,
 });
 
-const sanitizeAdmin = (admin) => ({
+const sanitizeAdmin = (admin, organization = null) => ({
   id: admin._id.toString(),
   fullName: admin.fullName,
   employeeId: admin.employeeId,
@@ -68,6 +68,10 @@ const sanitizeAdmin = (admin) => ({
   adminRole: normalizeAdminRole(admin),
   permissions: permissionsFor(admin),
   organizationId: admin.organizationId ? String(admin.organizationId) : null,
+  organization: organization ? {
+    id: String(organization._id), name: organization.name, category: organization.category,
+    enabledModules: organization.enabledModules || [],
+  } : undefined,
   accountStatus: admin.accountStatus || 'active',
   createdAt: admin.createdAt,
   updatedAt: admin.updatedAt,
@@ -167,12 +171,15 @@ const createAdmin = async (req, res) => {
     }
 
     const token = generateToken(admin);
+    const organization = admin.organizationId
+      ? await Organization.findById(admin.organizationId).select('name category enabledModules').lean()
+      : null;
 
     return res.status(201).json({
       success: true,
       message: existingAdminCount > 0 ? 'Admin account created successfully.' : 'Initial admin account created successfully.',
       token,
-      user: sanitizeAdmin(admin),
+      user: sanitizeAdmin(admin, organization),
     });
   } catch (error) {
     return res.status(500).json({
@@ -213,12 +220,15 @@ const loginAdmin = async (req, res) => {
     }
 
     const token = generateToken(admin);
+    const organization = admin.organizationId
+      ? await Organization.findById(admin.organizationId).select('name category enabledModules').lean()
+      : null;
 
     return res.status(200).json({
       success: true,
       message: 'Admin logged in successfully.',
       token,
-      user: sanitizeAdmin(admin),
+      user: sanitizeAdmin(admin, organization),
     });
   } catch (error) {
     return res.status(500).json({

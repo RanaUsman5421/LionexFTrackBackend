@@ -4,11 +4,41 @@ const AppSyncMetadata = require('../models/AppSyncMetadata');
 const LeadRecord = require('../models/LeadRecord');
 const FollowUpRecord = require('../models/FollowUpRecord');
 const ActivityRecord = require('../models/ActivityRecord');
+const Organization = require('../models/Organization');
+const { verifyDeviceSignature } = require('./verificationService');
 const { emitAppDataChanged } = require('./appDataRealtimeService');
 const { emitAppDataUpdate } = require('./socketService');
 
 const activityId = (item = {}) => String(item.id || '').trim()
   || `activity-${Number(item.timestampMs || 0)}-${String(item.type || item.title || '').trim()}`;
+
+const VERIFICATION_STATUSES = new Set(['Verified', 'Verified with Observations', 'Partially Verified', 'Revisit Required', 'Not Verified', 'Suspicious/High Risk', 'Customer Refused', 'Address Not Found']);
+const cleanVerificationRecord = (record = {}) => {
+  if (record.recordType !== 'customer_verification') return record;
+  const verification = record.customerVerification && typeof record.customerVerification === 'object' ? record.customerVerification : {};
+  const rawValues = verification.values && typeof verification.values === 'object' ? verification.values : {};
+  const biometricPayload = String(rawValues.officerBiometricPayload || '');
+  const payloadParts = biometricPayload.split(':');
+  const biometricTimestamp = Number(payloadParts.at(-1));
+  const biometricValid = verification.officerBiometricVerified === true
+    && biometricPayload.startsWith(`lionex-customer-verification-v1:${record.id}:`)
+    && Number.isFinite(biometricTimestamp) && biometricTimestamp > 0
+    && verifyDeviceSignature({ publicKey: rawValues.officerBiometricPublicKey, signature: rawValues.officerBiometricSignature, payload: biometricPayload });
+  if (!biometricValid) throw new Error('A valid officer biometric proof is required to submit a customer verification.');
+  const values = Object.fromEntries(Object.entries(rawValues).slice(0, 120).filter(([key]) => /^[A-Za-z][A-Za-z0-9]{0,79}$/.test(key)).map(([key, value]) => [key, String(value ?? '').slice(0, 2000)]));
+  const rawEvidence = verification.evidence && typeof verification.evidence === 'object' ? verification.evidence : {};
+  const evidence = Object.fromEntries(Object.entries(rawEvidence).slice(0, 20).filter(([key]) => /^[A-Za-z][A-Za-z0-9_-]{0,79}$/.test(key)).map(([key, item = {}]) => [key, {
+    remoteUrl: /^https:\/\//i.test(String(item.remoteUrl || '')) ? String(item.remoteUrl).slice(0, 2048) : '',
+    latitude: Number(item.latitude) || 0, longitude: Number(item.longitude) || 0,
+    accuracy: Math.max(0, Number(item.accuracy) || 0), capturedAtMs: Math.max(0, Number(item.capturedAtMs) || 0),
+    caseId: String(item.caseId || record.id || '').slice(0, 120),
+  }]));
+  const status = VERIFICATION_STATUSES.has(String(record.status)) ? String(record.status) : 'Partially Verified';
+  return { ...record, status, recordType: 'customer_verification', customerVerification: {
+    values, evidence, officerBiometricVerified: verification.officerBiometricVerified === true,
+    submittedAtMs: Math.max(0, Number(verification.submittedAtMs) || Date.now()),
+  } };
+};
 
 const singletonData = (snapshot = {}) => ({
   user: snapshot.user || {},
@@ -188,8 +218,14 @@ const applyEntityDelta = async (employeeId, delta = {}, organizationId) => {
   const leadAdminOverrides = protectedSnapshot?.leadAdminOverrides instanceof Map
     ? Object.fromEntries(protectedSnapshot.leadAdminOverrides)
     : protectedSnapshot?.leadAdminOverrides || {};
-  const safeLeadUpserts = (Array.isArray(delta.upsertLeads) ? delta.upsertLeads : [])
+  const incomingLeadUpserts = Array.isArray(delta.upsertLeads) ? delta.upsertLeads : [];
+  if (incomingLeadUpserts.some((lead) => lead?.recordType === 'customer_verification')) {
+    const organization = await Organization.findById(organizationId).select('category').lean();
+    if (organization?.category !== 'electronics_sales') throw new Error('Customer verifications are only available to Electronics Field Sales organizations.');
+  }
+  const safeLeadUpserts = incomingLeadUpserts
     .filter((lead) => !deletedLeadIds.has(lead?.id))
+    .map(cleanVerificationRecord)
     .map((lead) => ({ ...lead, ...(leadAdminOverrides[lead.id] || {}) }));
   await upsertRecords(LeadRecord, employeeId, safeLeadUpserts, (lead) => lead.id, undefined, organizationId);
   await softDeleteRecords(LeadRecord, employeeId, delta.deleteLeadIds);
@@ -249,6 +285,7 @@ const getEntityBundle = async (employeeId, sinceVersion = 0) => {
 
 module.exports = {
   activityId,
+  cleanVerificationRecord,
   applyEntityDelta,
   buildNormalizedSnapshot,
   getEntityBundle,

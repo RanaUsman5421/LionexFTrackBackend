@@ -66,6 +66,7 @@ const leadSessionSchema = new mongoose.Schema(
     startLabel: { type: String, default: '' },
     meetingStartTimeMs: { type: Number, default: 0 },
     meetingStartLabel: { type: String, default: '' },
+    sessionType: { type: String, default: 'Lead' },
     startPhotoUrl: { type: String, default: null },
     brand: { type: String, default: '' },
     draftLeadId: { type: String, default: null },
@@ -147,6 +148,8 @@ const leadSchema = new mongoose.Schema(
     expiresAtMs: { type: Number, default: 0 },
     durationMinutes: { type: Number, default: 0 },
     draft: { type: Boolean, default: false },
+    recordType: { type: String, enum: ['lead', 'customer_verification'], default: 'lead' },
+    customerVerification: { type: mongoose.Schema.Types.Mixed, default: null },
   },
   { _id: false }
 );

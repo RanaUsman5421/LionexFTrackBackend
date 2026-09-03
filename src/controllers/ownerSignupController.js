@@ -103,6 +103,7 @@ const verifyOwnerSignup = async (req, res) => {
     return res.status(201).json({ success: true, message: 'Organization and Owner account created.', token: generateToken(admin), user: {
       id: String(admin._id), fullName: admin.fullName, employeeId: admin.employeeId, username: admin.username, email: admin.email,
       role: admin.role, adminRole: admin.adminRole, organizationId: String(admin.organizationId), permissions: permissionsFor(admin), accountStatus: admin.accountStatus,
+      organization: { id: String(admin.organizationId), name: challenge.registration.companyName, category: challenge.registration.category, enabledModules: CATEGORY_MODULES[challenge.registration.category] },
     } });
   } catch (error) {
     await AdminSignupChallenge.updateOne({ _id: challenge._id }, { $set: { claimedAt: null } });

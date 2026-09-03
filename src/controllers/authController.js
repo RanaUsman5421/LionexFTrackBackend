@@ -21,7 +21,7 @@ const hashOtp = (email, otp) => crypto
   .digest('hex');
 const hashResetToken = (token) => crypto.createHash('sha256').update(token).digest('hex');
 
-const sanitizeUser = (user) => ({
+const sanitizeUser = (user, organization = null) => ({
   id: user._id.toString(),
   fullName: user.fullName,
   employeeId: user.employeeId,
@@ -40,6 +40,12 @@ const sanitizeUser = (user) => ({
   createdAt: user.createdAt,
   updatedAt: user.updatedAt,
   organizationId: user.organizationId ? String(user.organizationId) : null,
+  organization: organization ? {
+    id: String(organization._id),
+    name: organization.name,
+    category: organization.category,
+    enabledModules: organization.enabledModules || [],
+  } : undefined,
   ...userAccessState(user),
 });
 
@@ -171,12 +177,15 @@ const login = async (req, res) => {
     }
 
     const token = generateToken(user);
+    const organization = user.organizationId
+      ? await Organization.findById(user.organizationId).select('name category enabledModules').lean()
+      : null;
 
     return res.status(200).json({
       success: true,
       message: 'Logged in successfully.',
       token,
-      user: sanitizeUser(user),
+      user: sanitizeUser(user, organization),
     });
   } catch (error) {
     return res.status(500).json({
@@ -187,9 +196,12 @@ const login = async (req, res) => {
 };
 
 const getMe = async (req, res) => {
+  const organization = req.user.organizationId
+    ? await Organization.findById(req.user.organizationId).select('name category enabledModules').lean()
+    : null;
   return res.status(200).json({
     success: true,
-    user: sanitizeUser(req.user),
+    user: sanitizeUser(req.user, organization),
   });
 };
 

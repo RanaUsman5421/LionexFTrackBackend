@@ -4,7 +4,7 @@ const { hasPermission, normalizeAdminRole, permissionsFor } = require('../utils/
 
 const CATEGORY_MODULES = Object.freeze({
   pharmaceutical: ['doctors', 'chemists', 'dcr', 'samples', 'tour_plans'],
-  electronics_sales: ['dealers', 'outlets', 'orders', 'stock_audits'],
+  electronics_sales: ['customer_verifications', 'tracking', 'activities'],
   electronics_service: ['job_cards', 'warranty', 'installation', 'spare_parts'],
   banking: ['field_verification', 'cases', 'agents', 'maker_checker'],
   general: ['visits', 'leads', 'meetings', 'activities'],

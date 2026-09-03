@@ -29,7 +29,8 @@ async function uploadLeadPhotoToCloudinary({ buffer, filename, mimeType, employe
   const safeEmployeeId = sanitizeSegment(employeeId, 'employee');
   const safeLeadId = sanitizeSegment(leadId, 'lead');
   const safeKind = sanitizeSegment(kind, 'lead-photo');
-  const folder = `lionexftrack/leads/${safeEmployeeId}/${safeLeadId}`;
+  const domainFolder = String(kind || '').startsWith('verification-') ? 'verifications' : 'leads';
+  const folder = `lionexftrack/${domainFolder}/${safeEmployeeId}/${safeLeadId}`;
   const publicId = `${safeKind}-${Date.now()}`;
 
   return uploadToCloudinary({
@@ -70,7 +71,7 @@ async function uploadToCloudinary({ buffer, filename, mimeType, folder, publicId
     throw new Error('Upload payload is empty.');
   }
   if (forceWebp && !isWebpBuffer(buffer)) {
-    throw new Error('Lead photos must be uploaded as valid WebP images.');
+    throw new Error('Field evidence photos must be uploaded as valid WebP images.');
   }
 
   const cloudName = process.env.CLOUDINARY_CLOUD_NAME;
@@ -110,7 +111,7 @@ async function uploadToCloudinary({ buffer, filename, mimeType, folder, publicId
     throw new Error(data?.error?.message || data?.message || 'Cloudinary upload failed.');
   }
   if (forceWebp && String(data.format || '').toLowerCase() !== 'webp') {
-    throw new Error('Cloudinary did not store the lead photo as WebP.');
+    throw new Error('Cloudinary did not store the field evidence photo as WebP.');
   }
 
   return {

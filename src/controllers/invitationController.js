@@ -14,6 +14,9 @@ const hashToken = (token) => crypto.createHash('sha256').update(String(token || 
 const newToken = () => crypto.randomBytes(32).toString('base64url');
 const inviteUrl = (token) => `${(process.env.EMPLOYEE_INVITE_BASE_URL || 'https://lionexftrackbackend.onrender.com/api/invitations/open').replace(/\/$/, '')}/${encodeURIComponent(token)}`;
 const validEmail = (email) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+const employeeRoleForOrganization = (category, requestedRole) => category === 'electronics_sales'
+  ? 'Verification Officer'
+  : String(requestedRole || '').trim();
 
 const publicInvitation = (row) => ({
   id: String(row._id), type: row.type, email: row.email, status: row.status,
@@ -54,6 +57,8 @@ const createInvitation = async (req, res) => {
 
     const organization = await Organization.findById(req.organizationId);
     if (!organization) return res.status(404).json({ success: false, message: 'Organization not found.' });
+    const requestedRole = String(req.body?.role || '').trim();
+    const employeeRole = employeeRoleForOrganization(organization.category, requestedRole);
     if (type === 'employee' && (!String(req.body?.fullName || '').trim() || !String(req.body?.employeeId || '').trim())) {
       return res.status(400).json({ success: false, message: 'Employee name and employee ID are required.' });
     }
@@ -77,7 +82,7 @@ const createInvitation = async (req, res) => {
       employee: type === 'employee' ? {
         fullName: String(req.body.fullName || '').trim(), employeeId: String(req.body.employeeId || '').trim(),
         phone: String(req.body.phone || '').trim(), city: String(req.body.city || '').trim(), area: String(req.body.area || '').trim(),
-        role: String(req.body.role || '').trim(), department: String(req.body.department || '').trim(), joiningDate: String(req.body.joiningDate || '').trim(),
+        role: employeeRole, department: String(req.body.department || '').trim(), joiningDate: String(req.body.joiningDate || '').trim(),
       } : { fullName: String(req.body.fullName || '').trim() },
       adminRole: type === 'admin' ? String(req.body.adminRole || 'report_viewer') : 'report_viewer',
     });
@@ -196,4 +201,4 @@ const openInvitation = async (req, res) => {
   res.set('Referrer-Policy', 'no-referrer').type('html').send(`<!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1"><meta name="referrer" content="no-referrer"><title>Open LionEx FTrack</title></head><body style="font-family:Arial;text-align:center;padding:48px;background:#f4f6f8;color:#252832"><h1>Open LionEx FTrack</h1><p>Continue in the employee app to accept your private invitation.</p><p><a href="${deepLink}" style="display:inline-block;background:#f97316;color:white;padding:14px 24px;border-radius:10px;text-decoration:none;font-weight:bold">Open app</a></p><p style="color:#777;font-size:13px">Install the app first if it is not already available on this device.</p><script>location.href=${JSON.stringify(deepLink)}</script></body></html>`);
 };
 
-module.exports = { createInvitation, listInvitations, revokeInvitation, resendInvitation, resolveInvitation, acceptInvitation, openInvitation, hashToken };
+module.exports = { createInvitation, listInvitations, revokeInvitation, resendInvitation, resolveInvitation, acceptInvitation, openInvitation, hashToken, employeeRoleForOrganization };
