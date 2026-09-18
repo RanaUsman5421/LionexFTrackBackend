@@ -104,6 +104,9 @@ const leadDraftSchema = new mongoose.Schema(
     followUpDate: { type: String, default: '' },
     followUpTime: { type: String, default: '' },
     followUpNotes: { type: String, default: '' },
+    investmentInterest: { type: String, default: '' },
+    investmentRange: { type: String, default: '' },
+    decisionTimeline: { type: String, default: '' },
   },
   { _id: false }
 );
@@ -124,6 +127,9 @@ const leadSchema = new mongoose.Schema(
     remarks: { type: String, default: '' },
     status: { type: String, default: '' },
     leadType: { type: String, default: '' },
+    investmentInterest: { type: String, default: '' },
+    investmentRange: { type: String, default: '' },
+    decisionTimeline: { type: String, default: '' },
     sessionType: { type: String, default: '' },
     dailyVolume: { type: String, default: '' },
     weeklyVolume: { type: String, default: '' },

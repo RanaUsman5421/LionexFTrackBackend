@@ -121,7 +121,7 @@ const getLeads = async (employeeId) => {
 
 const mutableLeadFields = [
   'brand', 'address', 'city', 'area', 'contact', 'phone', 'phone2', 'workingSince', 'website',
-  'socials', 'remarks', 'status', 'leadType', 'sessionType', 'dailyVolume', 'weeklyVolume',
+  'socials', 'remarks', 'status', 'leadType', 'investmentInterest', 'investmentRange', 'decisionTimeline', 'sessionType', 'dailyVolume', 'weeklyVolume',
   'monthlyVolume', 'productType', 'avgWeight', 'presence', 'model', 'payment', 'metWith',
   'decisionMakerAvailable', 'experience', 'meetingTime', 'gps', 'startPhotoUrl',
   'indoorPhotoUrl', 'followUps', 'timeline', 'photoUrl', 'expiresAtMs', 'durationMinutes', 'draft',

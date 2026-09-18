@@ -6,7 +6,7 @@ const organizationSchema = new mongoose.Schema(
     companyCode: { type: String, required: true, trim: true, uppercase: true, unique: true, index: true },
     category: {
       type: String,
-      enum: ['pharmaceutical', 'electronics_sales', 'electronics_service', 'banking', 'general'],
+      enum: ['pharmaceutical', 'electronics_sales', 'electronics_service', 'banking', 'investor_program', 'general'],
       default: 'general',
       index: true,
     },

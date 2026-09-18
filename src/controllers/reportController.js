@@ -3,6 +3,7 @@ const LocationHistory = require('../models/LocationHistory');
 const EmployeeCurrentLocation = require('../models/EmployeeCurrentLocation');
 const TrackingSession = require('../models/TrackingSession');
 const LeadRecord = require('../models/LeadRecord');
+const Organization = require('../models/Organization');
 const FollowUpRecord = require('../models/FollowUpRecord');
 const ActivityRecord = require('../models/ActivityRecord');
 const VerificationChallenge = require('../models/VerificationChallenge');
@@ -137,12 +138,15 @@ const buildFieldReport = async (type, organizationId, range, employeeId, groupBy
   const query = { organizationId, deletedAt: null, createdAt: { $gte: range.from, $lte: range.to } };
   if (employeeId) query.employeeId = employeeId;
   if (['leads', 'lead_conversion', 'area_performance'].includes(type)) {
+    const investorProgram = (await Organization.findById(organizationId).select('category').lean())?.category === 'investor_program';
+    const positiveStatus = investorProgram ? 'Interested' : 'Registered';
+    const reportTitle = investorProgram ? 'Investor Leads Report' : 'Leads Report';
     if (groupBy === 'detailed') {
       const documents = await LeadRecord.find(query).sort({ createdAt: -1 }).limit(MAX_ROWS + 1).lean();
       const directory = await employeeDirectory(organizationId, [...new Set(documents.map((row) => row.employeeId))]);
-      const rows = documents.map((row) => ({ ...identity(directory, row.employeeId), brand: text(row.data?.brand || row.data?.name, 'Untitled lead'), status: text(row.data?.status, 'New'), leadType: text(row.data?.leadType || row.data?.type), createdAt: row.createdAt }));
-      const totalRegistered = rows.filter((row) => row.status === 'Registered').length;
-      return response(type, type === 'leads' ? 'Leads Report' : type === 'lead_conversion' ? 'Lead Conversion Report' : 'Area-wise Performance Report', range, [{ key: 'brand', label: 'Lead' }, { key: 'employee', label: 'Employee' }, { key: 'area', label: 'Area' }, { key: 'status', label: 'Status' }, { key: 'leadType', label: 'Type' }, { key: 'createdAt', label: 'Created', format: 'datetime' }], rows, [{ label: 'Total leads', value: rows.length }, { label: 'Registered', value: totalRegistered }, { label: 'Conversion', value: rows.length ? Number((totalRegistered / rows.length * 100).toFixed(1)) : 0, format: 'percent' }]);
+      const rows = documents.map((row) => ({ ...identity(directory, row.employeeId), brand: text(row.data?.brand || row.data?.name, 'Untitled lead'), status: text(row.data?.status, 'New'), leadType: text(row.data?.leadType || row.data?.type), investmentInterest: text(row.data?.investmentInterest), investmentRange: text(row.data?.investmentRange), decisionTimeline: text(row.data?.decisionTimeline), createdAt: row.createdAt }));
+      const totalRegistered = rows.filter((row) => row.status === positiveStatus).length;
+      return response(type, type === 'leads' ? reportTitle : type === 'lead_conversion' ? 'Lead Conversion Report' : 'Area-wise Performance Report', range, [{ key: 'brand', label: investorProgram ? 'Investor' : 'Lead' }, { key: 'employee', label: 'Employee' }, { key: 'area', label: 'Area' }, { key: 'status', label: 'Status' }, ...(investorProgram ? [{ key: 'investmentInterest', label: 'Interested Project' }, { key: 'investmentRange', label: 'Investment Range' }, { key: 'decisionTimeline', label: 'Decision Timeline' }] : [{ key: 'leadType', label: 'Type' }]), { key: 'createdAt', label: 'Created', format: 'datetime' }], rows, [{ label: 'Total leads', value: rows.length }, { label: positiveStatus, value: totalRegistered }, { label: 'Conversion', value: rows.length ? Number((totalRegistered / rows.length * 100).toFixed(1)) : 0, format: 'percent' }]);
     }
     const grouped = new Map();
     const employeeIds = new Set();
@@ -155,14 +159,14 @@ const buildFieldReport = async (type, organizationId, range, employeeId, groupBy
       const item = grouped.get(key) || { employeeId: document.employeeId, ...(period ? { period } : {}), total: 0, registered: 0 };
       item.total += 1;
       totalLeads += 1;
-      if (text(document.data?.status) === 'Registered') { item.registered += 1; totalRegistered += 1; }
+      if (text(document.data?.status) === positiveStatus) { item.registered += 1; totalRegistered += 1; }
       employeeIds.add(document.employeeId);
       grouped.set(key, item);
     }
     const directory = await employeeDirectory(organizationId, [...employeeIds]);
     const rows = [...grouped.values()].map((row) => ({ ...identity(directory, row.employeeId), ...row, conversion: row.total ? Number((row.registered / row.total * 100).toFixed(1)) : 0 })).sort((a, b) => (a.period || '').localeCompare(b.period || '') || b.total - a.total);
-    const columns = [...(isPeriodGrouping(groupBy) ? [periodColumn] : []), { key: 'employee', label: 'Employee' }, { key: 'area', label: 'Area' }, { key: 'total', label: 'Total Leads' }, { key: 'registered', label: 'Registered' }, { key: 'conversion', label: 'Conversion', format: 'percent' }];
-    return response(type, type === 'leads' ? 'Leads Report' : type === 'lead_conversion' ? 'Lead Conversion Report' : 'Area-wise Performance Report', range, columns, rows, [{ label: 'Total leads', value: totalLeads }, { label: 'Registered', value: totalRegistered }, { label: 'Conversion', value: totalLeads ? Number((totalRegistered / totalLeads * 100).toFixed(1)) : 0, format: 'percent' }]);
+    const columns = [...(isPeriodGrouping(groupBy) ? [periodColumn] : []), { key: 'employee', label: 'Employee' }, { key: 'area', label: 'Area' }, { key: 'total', label: 'Total Leads' }, { key: 'registered', label: positiveStatus }, { key: 'conversion', label: 'Conversion', format: 'percent' }];
+    return response(type, type === 'leads' ? reportTitle : type === 'lead_conversion' ? 'Lead Conversion Report' : 'Area-wise Performance Report', range, columns, rows, [{ label: 'Total leads', value: totalLeads }, { label: positiveStatus, value: totalRegistered }, { label: 'Conversion', value: totalLeads ? Number((totalRegistered / totalLeads * 100).toFixed(1)) : 0, format: 'percent' }]);
   }
   const Model = type === 'follow_ups' ? FollowUpRecord : ActivityRecord;
   if (groupBy === 'detailed') {
