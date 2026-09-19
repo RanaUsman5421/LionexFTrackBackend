@@ -13,6 +13,55 @@ const activityId = (item = {}) => String(item.id || '').trim()
   || `activity-${Number(item.timestampMs || 0)}-${String(item.type || item.title || '').trim()}`;
 
 const VERIFICATION_STATUSES = new Set(['Verified', 'Verified with Observations', 'Partially Verified', 'Revisit Required', 'Not Verified', 'Suspicious/High Risk', 'Customer Refused', 'Address Not Found']);
+const INVESTOR_TYPES = new Set(['Individual Investor', 'Business Owner', 'Angel Investor', 'Investment Firm', 'Corporate Investor', 'Existing Investor', 'Referral']);
+const INVESTMENT_CAPACITIES = new Set(['Below 1 Million', '1-5 Million', '5-10 Million', '10-25 Million', '25-50 Million', '50M+']);
+const INVESTMENT_INTERESTS = new Set(['Interested', 'Maybe / Considering', 'Not Interested', 'Need More Information']);
+const INVESTOR_VISIT_TYPES = new Set(['First Meeting', 'Follow-up', 'Presentation', 'Proposal Discussion', 'Negotiation', 'Due Diligence', 'Closing Meeting']);
+const INVESTOR_MEETING_STATUSES = new Set(['Successful', 'Interested', 'Follow-up Required', 'Proposal Requested', 'Management Meeting Required', 'Not Interested', 'No Meeting / Person Unavailable']);
+
+const cleanInvestorRecord = (record = {}) => {
+  if (record.leadType !== 'Investor Program' || record.draft === true || !record.investorType) return record;
+  const requiredText = ['brand', 'phone', 'city', 'discussionSummary', 'followUpRequired'];
+  if (requiredText.some((field) => !String(record[field] || '').trim())) {
+    throw new Error('Investor visit is missing required information.');
+  }
+  if (!INVESTOR_TYPES.has(record.investorType)
+    || !INVESTMENT_CAPACITIES.has(record.investmentCapacity)
+    || !INVESTMENT_INTERESTS.has(record.investmentInterestStatus)
+    || !INVESTOR_VISIT_TYPES.has(record.visitType)
+    || !INVESTOR_MEETING_STATUSES.has(record.meetingStatus)
+    || !['Yes', 'No'].includes(record.followUpRequired)) {
+    throw new Error('Investor visit contains an invalid selection.');
+  }
+  if (record.followUpRequired === 'Yes' && (!record.followUps?.length || !record.nextAction)) {
+    throw new Error('Investor follow-up details are required.');
+  }
+  const meetingDateTimeMs = Number(record.meetingDateTimeMs || 0);
+  const visitStartTimeMs = Number(record.visitStartTimeMs || 0);
+  const visitEndTimeMs = Number(record.visitEndTimeMs || 0);
+  const latitude = Number(record.gpsLatitude);
+  const longitude = Number(record.gpsLongitude);
+  const accuracy = Number(record.gpsAccuracyMeters || 0);
+  if (meetingDateTimeMs <= 0 || visitStartTimeMs <= 0 || visitEndTimeMs < visitStartTimeMs
+    || !Number.isFinite(latitude) || latitude < -90 || latitude > 90
+    || !Number.isFinite(longitude) || longitude < -180 || longitude > 180
+    || !Number.isFinite(accuracy) || accuracy < 0) {
+    throw new Error('Investor visit contains invalid automatic visit data.');
+  }
+  if (record.emailAddress && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(String(record.emailAddress))) {
+    throw new Error('Investor email address is invalid.');
+  }
+  return {
+    ...record,
+    meetingDateTimeMs,
+    visitStartTimeMs,
+    visitEndTimeMs,
+    meetingDurationSeconds: Math.max(0, Number(record.meetingDurationSeconds) || 0),
+    gpsLatitude: latitude,
+    gpsLongitude: longitude,
+    gpsAccuracyMeters: accuracy,
+  };
+};
 const cleanVerificationRecord = (record = {}) => {
   if (record.recordType !== 'customer_verification') return record;
   const verification = record.customerVerification && typeof record.customerVerification === 'object' ? record.customerVerification : {};
@@ -98,7 +147,7 @@ const importLegacySnapshot = async (employeeId, snapshot, { force = false, organ
     return metadata;
   }
 
-  const leads = Array.isArray(snapshot.leads) ? snapshot.leads : [];
+  const leads = (Array.isArray(snapshot.leads) ? snapshot.leads : []).map(cleanInvestorRecord);
   const followUps = Array.isArray(snapshot.followUps) ? snapshot.followUps : [];
   const activities = Array.isArray(snapshot.activityLog) ? snapshot.activityLog : [];
   const explicitDeletedLeadIds = Array.isArray(snapshot.deletedLeadIds) ? snapshot.deletedLeadIds : [];
@@ -219,13 +268,19 @@ const applyEntityDelta = async (employeeId, delta = {}, organizationId) => {
     ? Object.fromEntries(protectedSnapshot.leadAdminOverrides)
     : protectedSnapshot?.leadAdminOverrides || {};
   const incomingLeadUpserts = Array.isArray(delta.upsertLeads) ? delta.upsertLeads : [];
-  if (incomingLeadUpserts.some((lead) => lead?.recordType === 'customer_verification')) {
+  if (incomingLeadUpserts.some((lead) => lead?.recordType === 'customer_verification' || lead?.leadType === 'Investor Program')) {
     const organization = await Organization.findById(organizationId).select('category').lean();
-    if (organization?.category !== 'electronics_sales') throw new Error('Customer verifications are only available to Electronics Field Sales organizations.');
+    if (incomingLeadUpserts.some((lead) => lead?.recordType === 'customer_verification') && organization?.category !== 'electronics_sales') {
+      throw new Error('Customer verifications are only available to Electronics Field Sales organizations.');
+    }
+    if (incomingLeadUpserts.some((lead) => lead?.leadType === 'Investor Program') && organization?.category !== 'investor_program') {
+      throw new Error('Investor visits are only available to Investor Program organizations.');
+    }
   }
   const safeLeadUpserts = incomingLeadUpserts
     .filter((lead) => !deletedLeadIds.has(lead?.id))
     .map(cleanVerificationRecord)
+    .map(cleanInvestorRecord)
     .map((lead) => ({ ...lead, ...(leadAdminOverrides[lead.id] || {}) }));
   await upsertRecords(LeadRecord, employeeId, safeLeadUpserts, (lead) => lead.id, undefined, organizationId);
   await softDeleteRecords(LeadRecord, employeeId, delta.deleteLeadIds);

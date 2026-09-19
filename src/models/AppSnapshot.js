@@ -1,5 +1,14 @@
 const mongoose = require('mongoose');
 
+const investorTypes = ['', 'Individual Investor', 'Business Owner', 'Angel Investor', 'Investment Firm', 'Corporate Investor', 'Existing Investor', 'Referral'];
+const investmentCapacities = ['', 'Below 1 Million', '1-5 Million', '5-10 Million', '10-25 Million', '25-50 Million', '50M+'];
+const investmentInterestStatuses = ['', 'Interested', 'Maybe / Considering', 'Not Interested', 'Need More Information'];
+const preferredInvestmentTypes = ['', 'Equity', 'Profit Sharing', 'Partnership', 'Loan / Financing', 'Strategic Investment', 'Not Decided'];
+const investorVisitTypes = ['', 'First Meeting', 'Follow-up', 'Presentation', 'Proposal Discussion', 'Negotiation', 'Due Diligence', 'Closing Meeting'];
+const investorMeetingStatuses = ['', 'Successful', 'Interested', 'Follow-up Required', 'Proposal Requested', 'Management Meeting Required', 'Not Interested', 'No Meeting / Person Unavailable'];
+const leadStrengths = ['', 'Cold', 'Warm', 'Hot'];
+const followUpRequiredValues = ['', 'Yes', 'No'];
+
 const socialLinkSchema = new mongoose.Schema(
   {
     organizationId: { type: mongoose.Schema.Types.ObjectId, ref: 'Organization', default: null, index: true },
@@ -107,6 +116,28 @@ const leadDraftSchema = new mongoose.Schema(
     investmentInterest: { type: String, default: '' },
     investmentRange: { type: String, default: '' },
     decisionTimeline: { type: String, default: '' },
+    whatsappNumber: { type: String, default: '' },
+    emailAddress: { type: String, default: '' },
+    companyName: { type: String, default: '' },
+    designation: { type: String, default: '' },
+    businessIndustry: { type: String, default: '' },
+    investorType: { type: String, enum: investorTypes, default: '' },
+    investmentCapacity: { type: String, enum: investmentCapacities, default: '' },
+    minimumInvestmentAmount: { type: String, default: '' },
+    maximumInvestmentAmount: { type: String, default: '' },
+    investmentInterestStatus: { type: String, enum: investmentInterestStatuses, default: '' },
+    preferredInvestmentType: { type: String, enum: preferredInvestmentTypes, default: '' },
+    visitType: { type: String, enum: investorVisitTypes, default: '' },
+    meetingStatus: { type: String, enum: investorMeetingStatuses, default: '' },
+    discussionSummary: { type: String, default: '' },
+    investorRequirements: { type: String, default: '' },
+    investorQuestions: { type: String, default: '' },
+    expectedInvestmentAmount: { type: String, default: '' },
+    expectedDecisionDate: { type: String, default: '' },
+    leadStrength: { type: String, enum: leadStrengths, default: '' },
+    followUpRequired: { type: String, enum: followUpRequiredValues, default: '' },
+    nextAction: { type: String, default: '' },
+    followUpRemarks: { type: String, default: '' },
   },
   { _id: false }
 );
@@ -130,6 +161,28 @@ const leadSchema = new mongoose.Schema(
     investmentInterest: { type: String, default: '' },
     investmentRange: { type: String, default: '' },
     decisionTimeline: { type: String, default: '' },
+    whatsappNumber: { type: String, default: '' },
+    emailAddress: { type: String, default: '' },
+    companyName: { type: String, default: '' },
+    designation: { type: String, default: '' },
+    businessIndustry: { type: String, default: '' },
+    investorType: { type: String, enum: investorTypes, default: '' },
+    investmentCapacity: { type: String, enum: investmentCapacities, default: '' },
+    minimumInvestmentAmount: { type: String, default: '' },
+    maximumInvestmentAmount: { type: String, default: '' },
+    investmentInterestStatus: { type: String, enum: investmentInterestStatuses, default: '' },
+    preferredInvestmentType: { type: String, enum: preferredInvestmentTypes, default: '' },
+    visitType: { type: String, enum: investorVisitTypes, default: '' },
+    meetingStatus: { type: String, enum: investorMeetingStatuses, default: '' },
+    discussionSummary: { type: String, default: '' },
+    investorRequirements: { type: String, default: '' },
+    investorQuestions: { type: String, default: '' },
+    expectedInvestmentAmount: { type: String, default: '' },
+    expectedDecisionDate: { type: String, default: '' },
+    leadStrength: { type: String, enum: leadStrengths, default: '' },
+    followUpRequired: { type: String, enum: followUpRequiredValues, default: '' },
+    nextAction: { type: String, default: '' },
+    followUpRemarks: { type: String, default: '' },
     sessionType: { type: String, default: '' },
     dailyVolume: { type: String, default: '' },
     weeklyVolume: { type: String, default: '' },
@@ -153,6 +206,14 @@ const leadSchema = new mongoose.Schema(
     createdAtMs: { type: Number, default: Date.now },
     expiresAtMs: { type: Number, default: 0 },
     durationMinutes: { type: Number, default: 0 },
+    meetingDateTimeMs: { type: Number, default: 0 },
+    visitStartTimeMs: { type: Number, default: 0 },
+    visitEndTimeMs: { type: Number, default: 0 },
+    meetingDurationSeconds: { type: Number, default: 0 },
+    gpsLatitude: { type: Number, default: 0 },
+    gpsLongitude: { type: Number, default: 0 },
+    fullLocationAddress: { type: String, default: '' },
+    gpsAccuracyMeters: { type: Number, default: 0 },
     draft: { type: Boolean, default: false },
     recordType: { type: String, enum: ['lead', 'customer_verification'], default: 'lead' },
     customerVerification: { type: mongoose.Schema.Types.Mixed, default: null },
