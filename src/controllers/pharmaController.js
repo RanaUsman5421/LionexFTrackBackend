@@ -218,8 +218,8 @@ const createVisit = async (req, res) => {
   const samples = Array.isArray(req.body?.samples) ? req.body.samples.slice(0, 50) : [];
   const evidence = cleanEvidence(req.body?.evidence);
   const hasEvidence = (key) => typeof evidence[key] === 'string' ? Boolean(evidence[key]) : Boolean(evidence[key]?.url);
-  if (!visitId || !employeeId || !doctorId || !Number.isFinite(checkInAt.getTime()) || !Number.isFinite(checkOutAt.getTime()) || checkOutAt < checkInAt) {
-    return res.status(400).json({ success: false, message: 'Visit, employee, doctor, check-in, and check-out data are required.' });
+  if (!visitId || !employeeId || !Number.isFinite(checkInAt.getTime()) || !Number.isFinite(checkOutAt.getTime()) || checkOutAt < checkInAt) {
+    return res.status(400).json({ success: false, message: 'Visit, employee, check-in, and check-out data are required.' });
   }
   if (!list(req.body?.visitPurposes).length || !text(req.body?.doctorAvailable, 3) || !text(req.body?.outcome, 120) || !text(req.body?.overallRemarks, 4000) || !text(req.body?.finalStatus, 120) || req.body?.declarationAccepted !== true) {
     return res.status(400).json({ success: false, message: 'Visit purpose, availability, outcome, remarks, final status, and declaration are required.' });
@@ -233,10 +233,11 @@ const createVisit = async (req, res) => {
   const existing = await PharmaVisit.findOne({ organizationId: req.organizationId, visitId }).lean();
   if (existing) return res.json({ success: true, duplicate: true, message: 'Visit was already submitted.', visit: existing });
   const [doctor, employee] = await Promise.all([
-    Doctor.findOne({ _id: doctorId, organizationId: req.organizationId }),
+    doctorId ? Doctor.findOne({ _id: doctorId, organizationId: req.organizationId }) : Promise.resolve(null),
     User.findOne({ employeeId, organizationId: req.organizationId }).select('_id').lean(),
   ]);
-  if (!doctor || !employee) return res.status(404).json({ success: false, message: 'Doctor or employee was not found in this organization.' });
+  if (!employee) return res.status(404).json({ success: false, message: 'Employee was not found in this organization.' });
+  if (doctorId && !doctor) return res.status(404).json({ success: false, message: 'Doctor was not found in this organization.' });
 
   const deducted = [];
   let createdVisit = null;
@@ -253,13 +254,13 @@ const createVisit = async (req, res) => {
       if (!inventory) throw new Error('Sample stock is insufficient, expired, or not assigned to this representative.');
       deducted.push({ id: inventory._id, productId: inventory.productId, employeeId: inventory.employeeId, batchNumber: inventory.batchNumber, quantity, balanceAfter: inventory.quantityAvailable });
     }
-    const calculatedDoctorDistance = distanceMeters(req.body?.checkIn, doctor.location);
+    const calculatedDoctorDistance = doctor ? distanceMeters(req.body?.checkIn, doctor.location) : 0;
     const calculatedTravelDistance = distanceMeters(req.body?.checkIn, req.body?.checkOut);
     const radius = Math.max(25, Number(organization.settings?.pharmaVisitRadiusMeters) || 250);
     const visit = await PharmaVisit.create({
       organizationId: req.organizationId, visitId, schemaVersion: Math.max(1, Number(req.body?.schemaVersion) || 1),
       employeeId, doctorId, tourPlanId: objectId(req.body?.tourPlanId), visitType: text(req.body?.visitType, 20),
-      visitCategory: text(req.body?.visitCategory, 20), visitPurposes: list(req.body?.visitPurposes), territory: text(req.body?.territory, 120) || doctor.territory,
+      visitCategory: text(req.body?.visitCategory, 20), visitPurposes: list(req.body?.visitPurposes), territory: text(req.body?.territory, 120) || doctor?.territory || '',
       doctorAvailable: text(req.body?.doctorAvailable, 3), personMet: text(req.body?.personMet, 80), checkInAt, checkOutAt,
       checkIn: req.body?.checkIn || {}, checkOut: req.body?.checkOut || {}, visitDetails: req.body?.visitDetails || {},
       productDetails: (req.body?.productDetails || []).slice(0, 50), samples, promotionalMaterials: (req.body?.promotionalMaterials || []).slice(0, 50),
@@ -269,7 +270,7 @@ const createVisit = async (req, res) => {
       declarationAccepted: true, totalDurationSeconds: Math.max(0, Math.round((checkOutAt - checkInAt) / 1000)),
       distanceFromDoctorMeters: calculatedDoctorDistance,
       distanceFromCheckInMeters: calculatedTravelDistance,
-      insideAssignedRadius: calculatedDoctorDistance <= radius,
+      insideAssignedRadius: Boolean(doctor) && calculatedDoctorDistance <= radius,
       submissionStatus: req.body?.submissionStatus === 'offline_synced' && organization.settings?.allowOfflinePharmaVisits !== false ? 'offline_synced' : 'online',
       draft: req.body?.draft === true,
     });
@@ -282,10 +283,12 @@ const createVisit = async (req, res) => {
         balanceAfter: item.balanceAfter, createdBy: employeeId,
       })));
     }
-    doctor.lastVisitAt = checkOutAt;
-    doctor.lastVisitOutcome = visit.outcome;
-    doctor.nextFollowUpAt = visit.followUpRequired && visit.followUp?.date ? new Date(visit.followUp.date) : null;
-    await doctor.save();
+    if (doctor) {
+      doctor.lastVisitAt = checkOutAt;
+      doctor.lastVisitOutcome = visit.outcome;
+      doctor.nextFollowUpAt = visit.followUpRequired && visit.followUp?.date ? new Date(visit.followUp.date) : null;
+      await doctor.save();
+    }
     if (visit.tourPlanId) await TourPlan.updateOne({ _id: visit.tourPlanId, organizationId: req.organizationId }, { $set: { status: 'completed', completedVisitId: visit.visitId } });
     return res.status(201).json({ success: true, message: 'Pharma visit submitted.', visit });
   } catch (error) {

@@ -5,7 +5,7 @@ const pharmaVisitSchema = new mongoose.Schema({
   visitId: { type: String, required: true, trim: true, maxlength: 120 },
   schemaVersion: { type: Number, default: 1 },
   employeeId: { type: String, required: true, trim: true, index: true },
-  doctorId: { type: mongoose.Schema.Types.ObjectId, ref: 'Doctor', required: true, index: true },
+  doctorId: { type: mongoose.Schema.Types.ObjectId, ref: 'Doctor', default: null, index: true },
   tourPlanId: { type: mongoose.Schema.Types.ObjectId, ref: 'TourPlan', default: null },
   visitType: { type: String, enum: ['Planned', 'Unplanned'], required: true },
   visitCategory: { type: String, enum: ['Doctor', 'Clinic', 'Hospital'], required: true },
