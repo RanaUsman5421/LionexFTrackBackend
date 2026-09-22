@@ -224,9 +224,6 @@ const createVisit = async (req, res) => {
   if (!list(req.body?.visitPurposes).length || !text(req.body?.doctorAvailable, 3) || !text(req.body?.outcome, 120) || !text(req.body?.overallRemarks, 4000) || !text(req.body?.finalStatus, 120) || req.body?.declarationAccepted !== true) {
     return res.status(400).json({ success: false, message: 'Visit purpose, availability, outcome, remarks, final status, and declaration are required.' });
   }
-  if (req.body?.doctorAvailable === 'Yes' && !(Array.isArray(req.body?.productDetails) && req.body.productDetails.length)) {
-    return res.status(400).json({ success: false, message: 'At least one product detail is required when the doctor meeting occurs.' });
-  }
   if (req.body?.followUpRequired === true && !req.body?.followUp?.date) return res.status(400).json({ success: false, message: 'Follow-up date is required.' });
   if (organization.settings?.pharmaSignatureRequired && !hasEvidence('doctorSignature')) return res.status(400).json({ success: false, message: 'Doctor signature is required by organization policy.' });
   if (organization.settings?.pharmaAcknowledgementRequired && samples.length && !hasEvidence('sampleAcknowledgement')) return res.status(400).json({ success: false, message: 'Sample acknowledgement is required by organization policy.' });
