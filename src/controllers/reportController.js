@@ -197,7 +197,6 @@ const buildFieldReport = async (type, organizationId, range, employeeId, groupBy
 };
 
 const buildSecurityReport = async (type, organizationId, range, employeeId, groupBy) => {
-  if (type === 'suspicious_activity') return unavailable(type, 'Suspicious Activity Report', range, 'Suspicious-event scoring is not available in the current data model.');
   if (type === 'blocked_accounts') {
     const userQuery = { organizationId, accountStatus: { $in: ['blocked', 'inactive'] } };
     if (employeeId) userQuery.employeeId = employeeId;
@@ -261,7 +260,7 @@ const getReport = async (req, res) => {
     const travel = ['distance', 'route_history', 'petrol_consumption', 'fuel_cost', 'cost_per_km', 'cost_per_employee'];
     const workforce = ['employee_performance', 'attendance', 'duty_hours', 'overtime', 'late_start_early_stop', 'productivity'];
     const field = ['leads', 'lead_conversion', 'follow_ups', 'meetings_visits', 'activity', 'area_performance'];
-    const security = ['verification', 'missed_verification', 'tracking_interruptions', 'suspicious_activity', 'blocked_accounts'];
+    const security = ['verification', 'missed_verification', 'tracking_interruptions', 'blocked_accounts'];
     let report;
     if (travel.includes(type)) report = await buildTravelReport(type, req.organizationId, range, req, employeeId, groupBy);
     else if (workforce.includes(type)) report = await buildWorkforceReport(type, req.organizationId, range, employeeId, groupBy);

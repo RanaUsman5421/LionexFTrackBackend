@@ -55,11 +55,32 @@ test('verification sync strips device paths and preserves evidence metadata', ()
   const payload = `lionex-customer-verification-v1:CASE-1:${Date.now()}`;
   const signature = crypto.sign('sha256', Buffer.from(payload), privateKey).toString('base64');
   const record = cleanVerificationRecord({ id: 'CASE-1', recordType: 'customer_verification', status: 'Verified', customerVerification: {
-    values: { customerFullName: 'Ayesha', finalOfficerRemarks: 'Confirmed', officerBiometricPayload: payload, officerBiometricSignature: signature, officerBiometricPublicKey: publicKey.export({ type: 'spki', format: 'der' }).toString('base64') },
-    evidence: { cnicFront: { localPath: 'C:/private/photo.jpg', remoteUrl: 'https://cdn.example/cnic.webp', latitude: 31.5, longitude: 74.3, accuracy: 8, capturedAtMs: 123, caseId: 'CASE-1' } },
+    values: {
+      verificationSchemaVersion: '2',
+      applicationCaseId: 'APP-1', customerFullName: 'Ayesha', cnicNumber: '3520212345678',
+      mobileNumber: '03001234567', residentialAddress: 'Street 1', city: 'Lahore',
+      productName: 'Television', financeAmount: '150000', customerAvailable: 'Yes',
+      submittedAddressMatched: 'Yes', visitRemarks: 'Customer was available',
+      originalCnicChecked: 'Yes', cnicInformationMatched: 'Yes', customerFaceMatched: 'Yes',
+      customerLivesAtAddress: 'Yes', residenceType: 'Owned', utilityBillChecked: 'Yes',
+      workType: 'Salaried', employerName: 'Example Ltd', monthlyIncome: '120000',
+      workStatus: 'Verified', identityResult: 'Verified', residenceResult: 'Verified',
+      workResult: 'Verified', informationMismatch: 'No', suspiciousActivity: 'No',
+      revisitRequired: 'No', overallStatus: 'Verified', finalOfficerRemarks: 'Confirmed',
+      automaticGps: '31.5,74.3', automaticGpsAccuracy: '8', automaticVisitDateTimeMs: '123',
+      officerDeclaration: 'Yes', legacyReferenceCnic: 'must be discarded',
+      officerBiometricPayload: payload, officerBiometricSignature: signature,
+      officerBiometricPublicKey: publicKey.export({ type: 'spki', format: 'der' }).toString('base64'),
+    },
+    evidence: {
+      cnicFront: { localPath: 'C:/private/photo.jpg', remoteUrl: 'https://cdn.example/cnic.webp', latitude: 31.5, longitude: 74.3, accuracy: 8, capturedAtMs: 123, caseId: 'CASE-1' },
+      obsoleteReferencePhoto: { remoteUrl: 'https://cdn.example/old.webp' },
+    },
     officerBiometricVerified: true, submittedAtMs: 456,
   } });
   assert.equal(record.customerVerification.evidence.cnicFront.localPath, undefined);
   assert.equal(record.customerVerification.evidence.cnicFront.remoteUrl, 'https://cdn.example/cnic.webp');
   assert.equal(record.customerVerification.evidence.cnicFront.caseId, 'CASE-1');
+  assert.equal(record.customerVerification.values.legacyReferenceCnic, undefined);
+  assert.equal(record.customerVerification.evidence.obsoleteReferencePhoto, undefined);
 });

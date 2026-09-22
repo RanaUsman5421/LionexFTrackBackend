@@ -13,6 +13,29 @@ const activityId = (item = {}) => String(item.id || '').trim()
   || `activity-${Number(item.timestampMs || 0)}-${String(item.type || item.title || '').trim()}`;
 
 const VERIFICATION_STATUSES = new Set(['Verified', 'Verified with Observations', 'Partially Verified', 'Revisit Required', 'Not Verified', 'Suspicious/High Risk', 'Customer Refused', 'Address Not Found']);
+const VERIFICATION_VALUE_KEYS = new Set([
+  'applicationCaseId', 'customerFullName', 'cnicNumber', 'mobileNumber', 'residentialAddress', 'city',
+  'productName', 'financeAmount', 'customerAvailable', 'submittedAddressMatched', 'visitRemarks',
+  'originalCnicChecked', 'cnicInformationMatched', 'customerFaceMatched', 'customerLivesAtAddress',
+  'residenceType', 'utilityBillChecked', 'workType', 'employerName', 'businessName', 'otherWorkDetails',
+  'monthlyIncome', 'workStatus', 'identityResult', 'residenceResult', 'workResult', 'informationMismatch',
+  'suspiciousActivity', 'revisitRequired', 'overallStatus', 'finalOfficerRemarks',
+  'additionalDocumentDescription', 'officerDeviceId', 'officerBiometricPayload',
+  'officerBiometricSignature', 'officerBiometricPublicKey', 'automaticGps', 'automaticGpsAccuracy',
+  'automaticVisitDateTimeMs', 'officerDeclaration', 'verificationSchemaVersion',
+]);
+const REQUIRED_VERIFICATION_VALUES = [
+  'applicationCaseId', 'customerFullName', 'cnicNumber', 'mobileNumber', 'residentialAddress', 'city',
+  'productName', 'financeAmount', 'customerAvailable', 'submittedAddressMatched', 'visitRemarks',
+  'originalCnicChecked', 'cnicInformationMatched', 'customerFaceMatched', 'customerLivesAtAddress',
+  'residenceType', 'utilityBillChecked', 'workType', 'monthlyIncome', 'workStatus', 'identityResult',
+  'residenceResult', 'workResult', 'informationMismatch', 'suspiciousActivity', 'revisitRequired',
+  'overallStatus', 'finalOfficerRemarks', 'automaticGps', 'automaticGpsAccuracy',
+  'automaticVisitDateTimeMs', 'officerDeclaration',
+];
+const VERIFICATION_EVIDENCE_KEYS = new Set([
+  'cnicFront', 'cnicBack', 'customerLive', 'residenceExterior', 'workplace', 'additionalDocument',
+]);
 const INVESTOR_TYPES = new Set(['Individual Investor', 'Business Owner', 'Angel Investor', 'Investment Firm', 'Corporate Investor', 'Existing Investor', 'Referral']);
 const INVESTMENT_CAPACITIES = new Set(['Below 1 Million', '1-5 Million', '5-10 Million', '10-25 Million', '25-50 Million', '50M+']);
 const INVESTMENT_INTERESTS = new Set(['Interested', 'Maybe / Considering', 'Not Interested', 'Need More Information']);
@@ -74,15 +97,41 @@ const cleanVerificationRecord = (record = {}) => {
     && Number.isFinite(biometricTimestamp) && biometricTimestamp > 0
     && verifyDeviceSignature({ publicKey: rawValues.officerBiometricPublicKey, signature: rawValues.officerBiometricSignature, payload: biometricPayload });
   if (!biometricValid) throw new Error('A valid officer biometric proof is required to submit a customer verification.');
-  const values = Object.fromEntries(Object.entries(rawValues).slice(0, 120).filter(([key]) => /^[A-Za-z][A-Za-z0-9]{0,79}$/.test(key)).map(([key, value]) => [key, String(value ?? '').slice(0, 2000)]));
+  const usesCompactSchema = String(rawValues.verificationSchemaVersion || '') === '2';
+  const values = Object.fromEntries(
+    Object.entries(rawValues).slice(0, 120)
+      .filter(([key]) => usesCompactSchema
+        ? VERIFICATION_VALUE_KEYS.has(key)
+        : /^[A-Za-z][A-Za-z0-9]{0,79}$/.test(key))
+      .map(([key, value]) => [key, String(value ?? '').trim().slice(0, 2000)])
+  );
+  if (usesCompactSchema && REQUIRED_VERIFICATION_VALUES.some((key) => !values[key])) {
+    throw new Error('Customer verification is missing required information.');
+  }
+  const conditionalWorkField = {
+    Salaried: 'employerName',
+    'Business Owner': 'businessName',
+    Freelancer: 'otherWorkDetails',
+    Other: 'otherWorkDetails',
+  }[values.workType];
+  if (usesCompactSchema && (!conditionalWorkField || !values[conditionalWorkField])) {
+    throw new Error('Customer verification is missing required work information.');
+  }
+  if (usesCompactSchema && !VERIFICATION_STATUSES.has(values.overallStatus)) {
+    throw new Error('Customer verification contains an invalid overall status.');
+  }
   const rawEvidence = verification.evidence && typeof verification.evidence === 'object' ? verification.evidence : {};
-  const evidence = Object.fromEntries(Object.entries(rawEvidence).slice(0, 20).filter(([key]) => /^[A-Za-z][A-Za-z0-9_-]{0,79}$/.test(key)).map(([key, item = {}]) => [key, {
+  const evidence = Object.fromEntries(Object.entries(rawEvidence).slice(0, 20).filter(([key]) => usesCompactSchema
+    ? VERIFICATION_EVIDENCE_KEYS.has(key)
+    : /^[A-Za-z][A-Za-z0-9_-]{0,79}$/.test(key)).map(([key, item = {}]) => [key, {
     remoteUrl: /^https:\/\//i.test(String(item.remoteUrl || '')) ? String(item.remoteUrl).slice(0, 2048) : '',
     latitude: Number(item.latitude) || 0, longitude: Number(item.longitude) || 0,
     accuracy: Math.max(0, Number(item.accuracy) || 0), capturedAtMs: Math.max(0, Number(item.capturedAtMs) || 0),
     caseId: String(item.caseId || record.id || '').slice(0, 120),
   }]));
-  const status = VERIFICATION_STATUSES.has(String(record.status)) ? String(record.status) : 'Partially Verified';
+  const status = usesCompactSchema
+    ? values.overallStatus
+    : (VERIFICATION_STATUSES.has(String(record.status)) ? String(record.status) : 'Partially Verified');
   return { ...record, status, recordType: 'customer_verification', customerVerification: {
     values, evidence, officerBiometricVerified: verification.officerBiometricVerified === true,
     submittedAtMs: Math.max(0, Number(verification.submittedAtMs) || Date.now()),
