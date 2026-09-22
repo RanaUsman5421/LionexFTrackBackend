@@ -3,7 +3,7 @@ const Admin = require('../models/Admin');
 const { hasPermission, normalizeAdminRole, permissionsFor } = require('../utils/adminPermissions');
 
 const CATEGORY_MODULES = Object.freeze({
-  pharmaceutical: ['doctors', 'chemists', 'dcr', 'samples', 'tour_plans'],
+  pharmaceutical: ['doctors', 'chemists', 'dcr', 'tour_plans'],
   electronics_sales: ['customer_verifications', 'tracking', 'activities'],
   electronics_service: ['job_cards', 'warranty', 'installation', 'spare_parts'],
   banking: ['field_verification', 'cases', 'agents', 'maker_checker'],
@@ -47,7 +47,7 @@ const updateOrganization = async (req, res) => {
     update.enabledModules = CATEGORY_MODULES[update.category];
   }
   if (req.body?.settings && typeof req.body.settings === 'object') {
-    ['manualEmployeeApproval', 'trackingFrequencySeconds', 'timezone'].forEach((key) => {
+    ['manualEmployeeApproval', 'trackingFrequencySeconds', 'timezone', 'pharmaVisitRadiusMeters', 'pharmaSignatureRequired', 'pharmaAcknowledgementRequired', 'allowOfflinePharmaVisits'].forEach((key) => {
       if (Object.prototype.hasOwnProperty.call(req.body.settings, key)) update[`settings.${key}`] = req.body.settings[key];
     });
   }

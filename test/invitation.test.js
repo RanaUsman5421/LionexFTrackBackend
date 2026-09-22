@@ -8,6 +8,8 @@ const { hashToken, employeeRoleForOrganization } = require('../src/controllers/i
 const { cleanVerificationRecord } = require('../src/services/entitySyncService');
 const { hasPermission, permissionsFor } = require('../src/utils/adminPermissions');
 const { canAccessEmployee } = require('../src/utils/tenantAccess');
+const { CATEGORY_MODULES } = require('../src/controllers/organizationController');
+const Doctor = require('../src/models/Doctor');
 
 test('invitation stores a hash and enforces organization, expiry, and creator', async () => {
   const row = new Invitation({ type: 'employee', email: 'person@example.com', tokenHash: hashToken('private-token') });
@@ -47,7 +49,25 @@ test('manager access requires target employee in the same organization', async (
 
 test('electronics invitations enforce the verification officer role', () => {
   assert.equal(employeeRoleForOrganization('electronics_sales', 'Sales Executive'), 'Verification Officer');
+  assert.equal(employeeRoleForOrganization('pharmaceutical', 'Sales Executive'), 'Medical Representative');
   assert.equal(employeeRoleForOrganization('general', 'Sales Executive'), 'Sales Executive');
+});
+
+test('pharmaceutical organizations enable pharma modules and validate doctor profiles', async () => {
+  assert.deepEqual(CATEGORY_MODULES.pharmaceutical, ['doctors', 'chemists', 'dcr', 'tour_plans']);
+  const doctor = new Doctor({
+    organizationId: '507f1f77bcf86cd799439011',
+    doctorId: 'DOC-1',
+    fullName: 'Dr Ayesha',
+    specialization: 'Cardiology',
+    category: 'A',
+    clinicHospitalName: 'City Clinic',
+    address: 'Main Road',
+    city: 'Lahore',
+    territory: 'Central',
+  });
+  await doctor.validate();
+  assert.equal(doctor.potentialLevel, 'Medium');
 });
 
 test('verification sync strips device paths and preserves evidence metadata', () => {

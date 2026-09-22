@@ -16,6 +16,8 @@ const inviteUrl = (token) => `${(process.env.EMPLOYEE_INVITE_BASE_URL || 'https:
 const validEmail = (email) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
 const employeeRoleForOrganization = (category, requestedRole) => category === 'electronics_sales'
   ? 'Verification Officer'
+  : category === 'pharmaceutical'
+    ? 'Medical Representative'
   : String(requestedRole || '').trim();
 
 const publicInvitation = (row) => ({
@@ -82,7 +84,9 @@ const createInvitation = async (req, res) => {
       employee: type === 'employee' ? {
         fullName: String(req.body.fullName || '').trim(), employeeId: String(req.body.employeeId || '').trim(),
         phone: String(req.body.phone || '').trim(), city: String(req.body.city || '').trim(), area: String(req.body.area || '').trim(),
-        role: employeeRole, department: String(req.body.department || '').trim(), joiningDate: String(req.body.joiningDate || '').trim(),
+        role: employeeRole,
+        department: String(req.body.department || '').trim() || (organization.category === 'pharmaceutical' ? 'Sales' : ''),
+        joiningDate: String(req.body.joiningDate || '').trim(),
       } : { fullName: String(req.body.fullName || '').trim() },
       adminRole: type === 'admin' ? String(req.body.adminRole || 'report_viewer') : 'report_viewer',
     });

@@ -11,6 +11,7 @@ const AppSyncMetadata = require('../models/AppSyncMetadata');
 const LeadRecord = require('../models/LeadRecord');
 const FollowUpRecord = require('../models/FollowUpRecord');
 const ActivityRecord = require('../models/ActivityRecord');
+const PharmaVisit = require('../models/PharmaVisit');
 const VerificationChallenge = require('../models/VerificationChallenge');
 const BiometricDevice = require('../models/BiometricDevice');
 const generateToken = require('../utils/generateToken');
@@ -255,8 +256,17 @@ const listUsers = async (req, res) => {
     const hasMore = users.length > limit;
     if (hasMore) users.pop();
     const employeeIds = users.map((user) => user.employeeId);
-    const [snapshots, fieldDayRows, total, pending, approved, rejected] = await Promise.all([
+    const [organization, snapshots, pharmaVisitRows, fieldDayRows, total, pending, approved, rejected] = await Promise.all([
+      Organization.findById(organizationId).select('category').lean(),
       AppSnapshot.find({ organizationId, employeeId: { $in: employeeIds } }).select('employeeId leads').lean(),
+      PharmaVisit.aggregate([
+        { $match: { organizationId, employeeId: { $in: employeeIds }, draft: false } },
+        { $group: {
+          _id: '$employeeId',
+          leadsCount: { $sum: 1 },
+          registeredCount: { $sum: { $cond: [{ $eq: ['$doctorAvailable', 'Yes'] }, 1, 0] } },
+        } },
+      ]),
       TrackingSession.aggregate([
         { $match: { organizationId, employeeId: { $in: employeeIds }, startedAt: { $type: 'date' } } },
         { $group: { _id: { employeeId: '$employeeId', day: { $dateToString: { format: '%Y-%m-%d', date: '$startedAt' } } } } },
@@ -269,13 +279,18 @@ const listUsers = async (req, res) => {
     ]);
 
     const snapshotByEmployee = new Map(snapshots.map((snapshot) => [snapshot.employeeId, snapshot]));
+    const pharmaVisitsByEmployee = new Map(pharmaVisitRows.map((row) => [row._id, row]));
     const fieldDaysByEmployee = new Map(fieldDayRows.map((row) => [row._id, row.fieldDaysCount]));
     const sanitizedUsers = users.map((user) => {
       const snapshot = snapshotByEmployee.get(user.employeeId);
       const leads = Array.isArray(snapshot?.leads) ? snapshot.leads : [];
+      const pharmaMetrics = pharmaVisitsByEmployee.get(user.employeeId);
+      const isPharma = organization?.category === 'pharmaceutical';
       return sanitizeUser(user, {
-        leadsCount: leads.length,
-        registeredCount: leads.filter((lead) => lead.status === 'Registered').length,
+        leadsCount: isPharma ? pharmaMetrics?.leadsCount || 0 : leads.length,
+        registeredCount: isPharma
+          ? pharmaMetrics?.registeredCount || 0
+          : leads.filter((lead) => lead.status === 'Registered').length,
         fieldDaysCount: fieldDaysByEmployee.get(user.employeeId) || 0,
       });
     });
@@ -329,6 +344,13 @@ const createUser = async (req, res) => {
     });
     if (duplicate) {
       return res.status(409).json({ success: false, message: 'Email, username, or employee ID is already in use.' });
+    }
+
+    const organization = await Organization.findById(req.organizationId).select('category').lean();
+    if (organization?.category === 'electronics_sales') values.role = 'Verification Officer';
+    if (organization?.category === 'pharmaceutical') {
+      values.role = 'Medical Representative';
+      values.department = values.department || 'Sales';
     }
 
     const user = await User.create({
@@ -581,6 +603,12 @@ const updateUser = async (req, res) => {
         const notFoundError = new Error('User not found.');
         notFoundError.statusCode = 404;
         throw notFoundError;
+      }
+      const organization = await Organization.findById(req.organizationId).select('category').session(session).lean();
+      if (organization?.category === 'electronics_sales') values.role = 'Verification Officer';
+      if (organization?.category === 'pharmaceutical') {
+        values.role = 'Medical Representative';
+        values.department = values.department || 'Sales';
       }
 
       const duplicate = await User.findOne({

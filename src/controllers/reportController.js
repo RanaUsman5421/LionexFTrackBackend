@@ -7,6 +7,7 @@ const Organization = require('../models/Organization');
 const FollowUpRecord = require('../models/FollowUpRecord');
 const ActivityRecord = require('../models/ActivityRecord');
 const VerificationChallenge = require('../models/VerificationChallenge');
+const PharmaVisit = require('../models/PharmaVisit');
 const { hasPermission } = require('../utils/adminPermissions');
 
 const MAX_ROWS = 500;
@@ -245,6 +246,53 @@ const buildSecurityReport = async (type, organizationId, range, employeeId, grou
   return response(type, type === 'missed_verification' ? 'Missed Verification Report' : 'Verification & Compliance Report', range, columns, rows, [{ label: 'Checks', value: totals.checks }, { label: 'Verified', value: totals.verified }, { label: 'Missed', value: totals.missed }]);
 };
 
+const buildPharmaReport = async (type, organizationId, range, employeeId) => {
+  const query = { organizationId, checkInAt: { $gte: range.from, $lte: range.to } };
+  if (employeeId) query.employeeId = employeeId;
+  const documents = await PharmaVisit.find(query).populate('doctorId', 'fullName specialization clinicHospitalName territory').sort({ checkInAt: -1 }).limit(MAX_ROWS + 1).lean();
+  const directory = await employeeDirectory(organizationId, [...new Set(documents.map((row) => row.employeeId))]);
+  if (type === 'sample_distribution') {
+    const rows = documents.flatMap((visit) => (visit.samples || []).map((sample) => ({
+      ...identity(directory, visit.employeeId),
+      doctor: visit.doctorId?.fullName || 'Doctor',
+      product: text(sample.productName || sample.sampleProduct || sample.product),
+      batch: text(sample.batchNumber || sample.batch),
+      quantity: number(sample.quantity),
+      recipient: text(sample.recipient),
+      createdAt: visit.checkOutAt || visit.checkInAt,
+    }))).slice(0, MAX_ROWS);
+    return response(type, 'Sample Distribution Report', range, [
+      { key: 'employee', label: 'Medical Representative' }, { key: 'doctor', label: 'Doctor' },
+      { key: 'product', label: 'Sample Product' }, { key: 'batch', label: 'Batch' },
+      { key: 'quantity', label: 'Quantity' }, { key: 'recipient', label: 'Recipient' },
+      { key: 'createdAt', label: 'Distributed', format: 'datetime' },
+    ], rows, [{ label: 'Distribution records', value: rows.length }, { label: 'Samples issued', value: rows.reduce((total, row) => total + row.quantity, 0) }]);
+  }
+  const rows = documents.map((visit) => ({
+    ...identity(directory, visit.employeeId),
+    doctor: visit.doctorId?.fullName || 'Doctor',
+    specialization: visit.doctorId?.specialization || '',
+    clinic: visit.doctorId?.clinicHospitalName || '',
+    territory: visit.territory || visit.doctorId?.territory || '',
+    visitType: visit.visitType,
+    outcome: visit.outcome,
+    status: visit.finalStatus,
+    productive: visit.doctorAvailable === 'Yes' ? 'Yes' : 'No',
+    createdAt: visit.checkInAt,
+  }));
+  const title = type === 'doctor_coverage' ? 'Doctor Coverage Report' : 'Doctor Visits / DCR Report';
+  return response(type, title, range, [
+    { key: 'doctor', label: 'Doctor' }, { key: 'specialization', label: 'Specialization' },
+    { key: 'employee', label: 'Medical Representative' }, { key: 'territory', label: 'Territory' },
+    { key: 'visitType', label: 'Visit Type' }, { key: 'outcome', label: 'Outcome' },
+    { key: 'status', label: 'Final Status' }, { key: 'createdAt', label: 'Check-in', format: 'datetime' },
+  ], rows, [
+    { label: 'Doctor visits', value: rows.length },
+    { label: 'Unique doctors', value: new Set(rows.map((row) => row.doctor)).size },
+    { label: 'Productive calls', value: rows.filter((row) => row.productive === 'Yes').length },
+  ]);
+};
+
 const getReport = async (req, res) => {
   try {
     if (req.principalType !== 'admin' || !hasPermission(req.user, 'reports.read')) return res.status(403).json({ success: false, message: 'Not authorized to view reports.' });
@@ -261,11 +309,13 @@ const getReport = async (req, res) => {
     const workforce = ['employee_performance', 'attendance', 'duty_hours', 'overtime', 'late_start_early_stop', 'productivity'];
     const field = ['leads', 'lead_conversion', 'follow_ups', 'meetings_visits', 'activity', 'area_performance'];
     const security = ['verification', 'missed_verification', 'tracking_interruptions', 'blocked_accounts'];
+    const pharma = ['pharma_visits', 'doctor_coverage', 'sample_distribution'];
     let report;
     if (travel.includes(type)) report = await buildTravelReport(type, req.organizationId, range, req, employeeId, groupBy);
     else if (workforce.includes(type)) report = await buildWorkforceReport(type, req.organizationId, range, employeeId, groupBy);
     else if (field.includes(type)) report = await buildFieldReport(type, req.organizationId, range, employeeId, groupBy);
     else if (security.includes(type)) report = await buildSecurityReport(type, req.organizationId, range, employeeId, groupBy);
+    else if (pharma.includes(type)) report = await buildPharmaReport(type, req.organizationId, range, employeeId);
     else if (type === 'live_tracking' || type === 'area_coverage') {
       const locationQuery = { organizationId: req.organizationId };
       if (employeeId) locationQuery.employeeId = employeeId;
