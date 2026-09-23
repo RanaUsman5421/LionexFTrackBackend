@@ -50,6 +50,7 @@ test('manager access requires target employee in the same organization', async (
 test('electronics invitations enforce the verification officer role', () => {
   assert.equal(employeeRoleForOrganization('electronics_sales', 'Sales Executive'), 'Verification Officer');
   assert.equal(employeeRoleForOrganization('pharmaceutical', 'Sales Executive'), 'Medical Representative');
+  assert.equal(employeeRoleForOrganization('retailer_distribution', 'Sales Executive'), 'Field Sales Representative / Order Booker');
   assert.equal(employeeRoleForOrganization('general', 'Sales Executive'), 'Sales Executive');
 });
 

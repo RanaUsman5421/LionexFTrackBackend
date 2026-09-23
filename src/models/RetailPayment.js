@@ -1,0 +1,4 @@
+const mongoose = require('mongoose');
+const schema = new mongoose.Schema({ organizationId: { type: mongoose.Schema.Types.ObjectId, ref: 'Organization', required: true, index: true }, visitId: { type: mongoose.Schema.Types.ObjectId, ref: 'RetailVisit', required: true }, retailerId: { type: mongoose.Schema.Types.ObjectId, ref: 'Retailer', required: true, index: true }, employeeId: { type: String, required: true }, amount: { type: Number, required: true, min: 0 }, mode: { type: String, required: true }, referenceNumber: { type: String, default: '' }, receiptNumber: { type: String, default: '' }, evidenceUrl: { type: String, default: '' }, status: { type: String, default: 'Partially Paid' }, remarks: { type: String, default: '' } }, { timestamps: true });
+schema.index({ organizationId: 1, createdAt: -1 });
+module.exports = mongoose.model('RetailPayment', schema);

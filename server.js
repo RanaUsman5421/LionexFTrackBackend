@@ -11,6 +11,7 @@ const trackingRoutes = require('./src/routes/trackingRoutes');
 const verificationRoutes = require('./src/routes/verificationRoutes');
 const invitationRoutes = require('./src/routes/invitationRoutes');
 const pharmaRoutes = require('./src/routes/pharmaRoutes');
+const retailRoutes = require('./src/routes/retailRoutes');
 const { initializeSocket } = require('./src/services/socketService');
 const { ensureLegacyOrganization } = require('./src/services/organizationBootstrapService');
 
@@ -51,6 +52,7 @@ app.use('/api/tracking', trackingRoutes);
 app.use('/api/verifications', verificationRoutes);
 app.use('/api/invitations', invitationRoutes);
 app.use('/api/pharma', pharmaRoutes);
+app.use('/api/retail', retailRoutes);
 
 const startServer = async () => {
   await connectDB();

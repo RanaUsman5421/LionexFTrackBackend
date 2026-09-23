@@ -352,6 +352,10 @@ const createUser = async (req, res) => {
       values.role = 'Medical Representative';
       values.department = values.department || 'Sales';
     }
+    if (organization?.category === 'retailer_distribution') {
+      values.role = 'Field Sales Representative / Order Booker';
+      values.department = values.department || 'Sales';
+    }
 
     const user = await User.create({
       ...values,
@@ -608,6 +612,10 @@ const updateUser = async (req, res) => {
       if (organization?.category === 'electronics_sales') values.role = 'Verification Officer';
       if (organization?.category === 'pharmaceutical') {
         values.role = 'Medical Representative';
+        values.department = values.department || 'Sales';
+      }
+      if (organization?.category === 'retailer_distribution') {
+        values.role = 'Field Sales Representative / Order Booker';
         values.department = values.department || 'Sales';
       }
 

@@ -1,0 +1,18 @@
+const express = require('express');
+const { protect } = require('../middleware/authMiddleware');
+const controller = require('../controllers/retailController');
+const router = express.Router();
+router.use(protect);
+router.get('/summary', controller.summary);
+router.get('/retailers', controller.listRetailers);
+router.post('/retailers', controller.createRetailer);
+router.patch('/retailers/:retailerId/status', controller.updateRetailerStatus);
+router.get('/products', controller.listProducts);
+router.post('/products', controller.createProduct);
+router.get('/visits', controller.listVisits);
+router.get('/visits/:visitId', controller.getVisit);
+router.post('/visits', controller.createVisit);
+router.get('/orders', controller.listOrders);
+router.get('/payments', controller.listPayments);
+router.get('/returns', controller.listReturns);
+module.exports = router;

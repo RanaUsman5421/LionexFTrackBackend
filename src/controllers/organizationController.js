@@ -8,6 +8,7 @@ const CATEGORY_MODULES = Object.freeze({
   electronics_service: ['job_cards', 'warranty', 'installation', 'spare_parts'],
   banking: ['field_verification', 'cases', 'agents', 'maker_checker'],
   investor_program: ['visits', 'leads', 'meetings', 'activities'],
+  retailer_distribution: ['retailers', 'retail_visits', 'orders', 'payments', 'returns', 'products', 'routes', 'follow_ups'],
   general: ['visits', 'leads', 'meetings', 'activities'],
 });
 

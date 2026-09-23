@@ -1,0 +1,4 @@
+const mongoose = require('mongoose');
+const schema = new mongoose.Schema({ organizationId: { type: mongoose.Schema.Types.ObjectId, ref: 'Organization', required: true, index: true }, visitId: { type: mongoose.Schema.Types.ObjectId, ref: 'RetailVisit', required: true }, retailerId: { type: mongoose.Schema.Types.ObjectId, ref: 'Retailer', required: true, index: true }, employeeId: { type: String, required: true }, items: { type: [mongoose.Schema.Types.Mixed], default: [] }, status: { type: String, enum: ['Requested', 'Under Review', 'Approved', 'Rejected', 'Collected', 'Received at Warehouse', 'Replacement Dispatched', 'Credit Note Issued', 'Closed'], default: 'Requested', index: true }, statusHistory: { type: [mongoose.Schema.Types.Mixed], default: [] } }, { timestamps: true });
+schema.index({ organizationId: 1, createdAt: -1 });
+module.exports = mongoose.model('RetailReturn', schema);

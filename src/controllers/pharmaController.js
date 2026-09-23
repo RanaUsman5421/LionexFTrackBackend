@@ -225,7 +225,6 @@ const createVisit = async (req, res) => {
     return res.status(400).json({ success: false, message: 'Visit purpose, availability, outcome, remarks, final status, and declaration are required.' });
   }
   if (req.body?.followUpRequired === true && !req.body?.followUp?.date) return res.status(400).json({ success: false, message: 'Follow-up date is required.' });
-  if (organization.settings?.pharmaSignatureRequired && !hasEvidence('doctorSignature')) return res.status(400).json({ success: false, message: 'Doctor signature is required by organization policy.' });
   if (organization.settings?.pharmaAcknowledgementRequired && samples.length && !hasEvidence('sampleAcknowledgement')) return res.status(400).json({ success: false, message: 'Sample acknowledgement is required by organization policy.' });
   const existing = await PharmaVisit.findOne({ organizationId: req.organizationId, visitId }).lean();
   if (existing) return res.json({ success: true, duplicate: true, message: 'Visit was already submitted.', visit: existing });

@@ -18,6 +18,8 @@ const employeeRoleForOrganization = (category, requestedRole) => category === 'e
   ? 'Verification Officer'
   : category === 'pharmaceutical'
     ? 'Medical Representative'
+  : category === 'retailer_distribution'
+    ? 'Field Sales Representative / Order Booker'
   : String(requestedRole || '').trim();
 
 const publicInvitation = (row) => ({
@@ -85,7 +87,7 @@ const createInvitation = async (req, res) => {
         fullName: String(req.body.fullName || '').trim(), employeeId: String(req.body.employeeId || '').trim(),
         phone: String(req.body.phone || '').trim(), city: String(req.body.city || '').trim(), area: String(req.body.area || '').trim(),
         role: employeeRole,
-        department: String(req.body.department || '').trim() || (organization.category === 'pharmaceutical' ? 'Sales' : ''),
+        department: String(req.body.department || '').trim() || (['pharmaceutical', 'retailer_distribution'].includes(organization.category) ? 'Sales' : ''),
         joiningDate: String(req.body.joiningDate || '').trim(),
       } : { fullName: String(req.body.fullName || '').trim() },
       adminRole: type === 'admin' ? String(req.body.adminRole || 'report_viewer') : 'report_viewer',
