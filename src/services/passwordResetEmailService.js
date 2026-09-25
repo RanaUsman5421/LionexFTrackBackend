@@ -49,7 +49,7 @@ const sendPasswordResetEmail = async ({ to, name, otp, expiresInMinutes }) => {
 
   const resend = new Resend(apiKey);
   const { data, error } = await resend.emails.send({
-    from: process.env.RESEND_FROM_EMAIL || 'LionEx FTrack <onboarding@resend.dev>',
+    from: process.env.RESEND_FROM_EMAIL || 'no-reply@intellioera.com',
     to: [to],
     subject: 'Your LionEx FTrack password reset code',
     html: buildPasswordResetEmail({ name, otp, expiresInMinutes }),
@@ -81,7 +81,7 @@ const sendInvitationEmail = async (details) => {
   if (!apiKey) throw new Error('RESEND_EMAIL_API_KEY is not configured.');
   const resend = new Resend(apiKey);
   const { data, error } = await resend.emails.send({
-    from: process.env.RESEND_FROM_EMAIL || 'LionEx FTrack <onboarding@resend.dev>',
+    from: process.env.RESEND_FROM_EMAIL || 'no-reply@intellioera.com',
     to: [details.to],
     subject: `You're invited to ${details.organizationName} on LionEx FTrack`,
     html: buildInvitationEmail(details),
@@ -97,7 +97,7 @@ const sendAdminSignupEmail = async (details) => {
   if (!apiKey) throw new Error('RESEND_EMAIL_API_KEY is not configured.');
   const resend = new Resend(apiKey);
   const { data, error } = await resend.emails.send({
-    from: process.env.RESEND_FROM_EMAIL || 'LionEx FTrack <onboarding@resend.dev>',
+    from: process.env.RESEND_FROM_EMAIL || 'no-reply@intellioera.com',
     to: [details.to],
     subject: 'Verify your LionEx FTrack organization',
     html: buildAdminSignupEmail(details),
