@@ -12,7 +12,7 @@ const INVITE_TTL_HOURS = Math.min(72, Math.max(24, Number(process.env.INVITATION
 const normalizeEmail = (value) => String(value || '').trim().toLowerCase();
 const hashToken = (token) => crypto.createHash('sha256').update(String(token || '')).digest('hex');
 const newToken = () => crypto.randomBytes(32).toString('base64url');
-const inviteUrl = (token) => `${(process.env.EMPLOYEE_INVITE_BASE_URL || 'https://lionexftrackbackend.onrender.com/api/invitations/open').replace(/\/$/, '')}/${encodeURIComponent(token)}`;
+const inviteUrl = (token) => `${(process.env.EMPLOYEE_INVITE_BASE_URL || 'https://lionexftrackbackend-scpo.onrender.com/api/invitations/open').replace(/\/$/, '')}/${encodeURIComponent(token)}`;
 const validEmail = (email) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
 const employeeRoleForOrganization = (category, requestedRole) => category === 'electronics_sales'
   ? 'Verification Officer'

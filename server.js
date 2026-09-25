@@ -36,7 +36,7 @@ app.get('/', (req, res) => {
   res.status(200).json({
     success: true,
     message: 'LionexFTrack backend is running.',
-    url: 'https://lionexftrackbackend.onrender.com'
+    url: 'https://lionexftrackbackend-scpo.onrender.com'
   });
 });
 
