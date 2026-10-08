@@ -370,6 +370,7 @@ const buildTrackingUrl = (order, expiresAt) => {
 
 const publicTracking = async (req, res) => {
   try {
+    res.set('Cache-Control', 'no-store, no-cache, must-revalidate');
     const token = Buffer.from(String(req.params.token || ''), 'base64url').toString('utf8');
     const [orderId, expiresValue, suppliedSignature] = token.split('.');
     const expiresAtMs = Number(expiresValue);
@@ -394,15 +395,19 @@ const publicTracking = async (req, res) => {
       organizationId: order.organizationId,
       employeeId: order.assignedTo.employeeId,
     }).select('location.coordinates accuracy timestamp trackingStatus sessionStatus').lean();
-    const fresh = current?.timestamp && Date.now() - new Date(current.timestamp).getTime() <= 180_000;
+    const fresh = Boolean(current?.timestamp && Date.now() - new Date(current.timestamp).getTime() <= 180_000);
     const trackingAvailable = Boolean(fresh && current.trackingStatus === 'ACTIVE' && current.sessionStatus === 'active');
     const coordinates = current?.location?.coordinates || [];
+    const hasCoordinates = coordinates.length >= 2 &&
+      Number.isFinite(coordinates[1]) && coordinates[1] >= -90 && coordinates[1] <= 90 &&
+      Number.isFinite(coordinates[0]) && coordinates[0] >= -180 && coordinates[0] <= 180;
     return res.json({
       success: true,
       orderNumber: order.orderNumber,
       status: order.status,
       trackingAvailable,
-      location: trackingAvailable && coordinates.length >= 2
+      locationFresh: fresh,
+      location: hasCoordinates
         ? { latitude: coordinates[1], longitude: coordinates[0], accuracy: current.accuracy, updatedAt: current.timestamp }
         : null,
       refreshedAt: new Date().toISOString(),
@@ -443,27 +448,6 @@ const updateStatus = async (req, res) => {
         success: false,
         code: 'ORDER_TRACKING_LINK_NOT_CONFIGURED',
         message: 'Customer tracking link is not configured on the server.',
-      });
-    }
-    const liveLocation = await EmployeeCurrentLocation.findOne({
-      organizationId: req.organizationId,
-      employeeId: current.assignedTo.employeeId,
-    }).select('location.coordinates timestamp trackingStatus sessionStatus').lean();
-    const locationAgeMs = liveLocation?.timestamp
-      ? Date.now() - new Date(liveLocation.timestamp).getTime()
-      : Number.POSITIVE_INFINITY;
-    const locationReady = Boolean(
-      liveLocation &&
-      locationAgeMs >= -30_000 && locationAgeMs <= 180_000 &&
-      liveLocation.trackingStatus === 'ACTIVE' &&
-      liveLocation.sessionStatus === 'active' &&
-      liveLocation.location?.coordinates?.length >= 2
-    );
-    if (!locationReady) {
-      return res.status(409).json({
-        success: false,
-        code: 'ORDER_TRACKING_NOT_READY',
-        message: 'Start Field Day and wait for a fresh GPS location before marking this order On the Way.',
       });
     }
   }
