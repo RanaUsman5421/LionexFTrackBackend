@@ -113,7 +113,6 @@ async function waitForQrOrConnect(profile, ms = 25000) {
     await new Promise((r) => setTimeout(r, 300));
   }
 }
-
 async function sendWhatsAppText(profileId, rawNumber, text) {
   const phone = String(rawNumber || '').replace(/[\s()+-]/g, '');
   if (!/^\d{8,15}$/.test(phone)) throw new Error('Invalid WhatsApp phone number.');

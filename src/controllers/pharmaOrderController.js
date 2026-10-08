@@ -2,6 +2,7 @@ const crypto = require('crypto');
 const mongoose = require('mongoose');
 const Organization = require('../models/Organization');
 const PharmaOrder = require('../models/PharmaOrder');
+const User = require('../models/User');
 const EmployeeCurrentLocation = require('../models/EmployeeCurrentLocation');
 const WhatsAppOrderSettings = require('../models/WhatsAppOrderSettings');
 const whatsappRouter = require('../whatsapp/whatsapp');
@@ -11,6 +12,7 @@ const { emitPharmaOrderSocketChange } = require('../services/socketService');
 
 const ORDER_STATUSES = ['Booked', 'Order Picked', 'On the Way', 'Arrived', 'Delivered'];
 const text = (value, max = 500) => String(value ?? '').trim().slice(0, max);
+const oneLine = (value, max = 500) => text(value, max).replace(/\s+/g, ' ');
 const normalizePhone = (value) => {
   const digits = String(value || '').replace(/\D/g, '');
   if (/^03\d{9}$/.test(digits)) return `92${digits.slice(1)}`;
@@ -76,6 +78,7 @@ const createOrder = async (req, res) => {
   const body = req.body || {};
   const customerName = text(body.customerName, 120);
   const customerPhone = normalizePhone(body.customerPhone);
+  const customerCity = text(body.customerCity, 100);
   const customerAddress = text(body.customerAddress, 500);
   const notes = text(body.notes, 1000);
   const totalAmount = body.totalAmount === '' || body.totalAmount == null ? null : Number(body.totalAmount);
@@ -88,30 +91,44 @@ const createOrder = async (req, res) => {
     unitPrice: item?.unitPrice === '' || item?.unitPrice == null ? null : Number(item.unitPrice),
   }));
 
-  if (!customerName || !customerAddress || !/^\d{8,15}$/.test(customerPhone) || !items.length || items.some((item) => !item.productName || !Number.isInteger(item.quantity) || item.quantity < 1 || item.quantity > 99999 || (item.unitPrice !== null && (!Number.isFinite(item.unitPrice) || item.unitPrice < 0)))) {
-    return res.status(400).json({ success: false, message: 'Enter customer name, valid phone, address, and at least one valid product with quantity.' });
+  if (!customerName || !customerCity || !customerAddress || !/^\d{8,15}$/.test(customerPhone) || totalAmount === null || !items.length || items.some((item) => !item.productName || !Number.isInteger(item.quantity) || item.quantity < 1 || item.quantity > 99999 || (item.unitPrice !== null && (!Number.isFinite(item.unitPrice) || item.unitPrice < 0)))) {
+    return res.status(400).json({ success: false, message: 'Enter customer name, valid phone, city, address, total amount, and at least one valid product with quantity.' });
   }
   if (totalAmount !== null && (!Number.isFinite(totalAmount) || totalAmount < 0)) {
     return res.status(400).json({ success: false, message: 'Total amount must be zero or more.' });
   }
 
   const createdByName = text(req.user?.fullName || req.user?.username || req.user?.email, 120);
+  const bookedAt = new Date();
   const order = await PharmaOrder.create({
     organizationId: req.organizationId,
     orderNumber: orderCode(),
     customerName,
     customerPhone,
+    customerCity,
     customerAddress,
     items,
     totalAmount,
     notes,
     createdByUserId: req.user._id,
     createdByName,
-    statusHistory: [{ status: 'Booked', changedAt: new Date(), changedByUserId: req.user._id, changedByName: createdByName }],
+    statusHistory: [{
+      status: 'Booked',
+      changedAt: bookedAt,
+      changedByUserId: req.user._id,
+      changedByName: createdByName,
+      notifications: { status: 'pending' },
+    }],
   });
   emitOrganizationEvent(req.organizationId, 'pharma-order-changed', { orderId: String(order._id), action: 'created' });
   emitPharmaOrderSocketChange(req.organizationId, order._id, 'created');
-  return res.status(201).json({ success: true, order, message: 'Pharma order created.' });
+  scheduleOrderNotification(order, 'Booked', bookedAt);
+  return res.status(201).json({
+    success: true,
+    order,
+    notifications: { status: 'pending' },
+    message: 'Pharma order created. Booking WhatsApp notifications are being sent.',
+  });
 };
 
 const claimOrder = async (req, res) => {
@@ -139,20 +156,132 @@ const claimOrder = async (req, res) => {
   return res.json({ success: true, order, message: 'Order taken successfully.' });
 };
 
-const sendStatusMessages = async (order, status, settings) => {
-  const itemSummary = order.items.map((item) => `${item.productName} x ${item.quantity}`).join(', ');
-  const message = [
-    `*${text(settings?.brandName, 100) || 'Order update'}*`,
-    '',
-    `Order: ${order.orderNumber}`,
-    `Customer: ${order.customerName}`,
-    `Product: ${itemSummary}`,
-    order.totalAmount == null ? '' : `Total: PKR ${order.totalAmount}`,
-    `Delivery address: ${order.customerAddress}`,
-    `Status: ${status}`,
-    order.trackingUrl ? `Live delivery location: ${order.trackingUrl}` : '',
-  ].filter(Boolean).join('\n');
-  const send = async (phone) => {
+const amountText = (amount) => {
+  const value = Number(amount);
+  return amount == null || !Number.isFinite(value)
+    ? 'Not provided'
+    : value.toLocaleString('en-PK', { maximumFractionDigits: 2 });
+};
+
+const formatOrderStatusMessage = async (order, status, settings) => {
+  const brandName = oneLine(settings?.brandName, 100) || 'Pharma';
+  const customerName = oneLine(order.customerName, 120) || 'Customer';
+  const orderNumber = oneLine(order.orderNumber, 80) || 'Not provided';
+  const customerCity = oneLine(order.customerCity, 100) || 'Not provided';
+  const deliveryAddress = oneLine(order.customerAddress, 500) || 'Not provided';
+  const addressWithCity = `${deliveryAddress}, ${customerCity}`;
+  let riderName = oneLine(order.assignedTo?.fullName || order.assignedTo?.username, 120) || 'Not assigned';
+  let riderPhone = '';
+  if (order.assignedTo?.userId) {
+    const rider = await User.findById(order.assignedTo.userId).select('fullName phone').lean();
+    riderName = oneLine(rider?.fullName || riderName, 120);
+    riderPhone = oneLine(rider?.phone, 24);
+  }
+  const riderDetails = [
+    `🛵 Rider: ${riderName}`,
+    `📞 Rider Contact: ${riderPhone || 'Not provided'}`,
+  ];
+  const orderDetails = [
+    `🔍 Order No: ${orderNumber}`,
+    `👤 Customer: ${customerName}`,
+  ];
+  const footer = [`🏥 ${brandName}`, 'Care, delivered to your doorstep 💚'].join('\n');
+  const payable = `Rs. ${amountText(order.totalAmount)}`;
+
+  switch (status) {
+    case 'Booked':
+      return [
+        '✅ Order Booked',
+        'Thank you for your order! 💚',
+        'Your parcel has been booked and will be delivered soon 📦',
+        '',
+        `🔍 Order No: ${orderNumber}`,
+        `👤 Customer: ${customerName}`,
+        `🏙️ City: ${customerCity}`,
+        `📍 Address: ${deliveryAddress}`,
+        `💸 Order Amount: ${payable}`,
+        '',
+        footer,
+      ].join('\n');
+    case 'Order Picked':
+      return [
+        '📦 Order Picked',
+        'Your order has been picked for delivery. We’ll keep you updated 📦',
+        '',
+        ...orderDetails,
+        ...riderDetails,
+        `📍 Address: ${addressWithCity}`,
+        '',
+        footer,
+      ].join('\n');
+    case 'On the Way':
+      return [
+        '🛵 Rider On the Way',
+        `Your ${brandName} order is on the way 📦`,
+        '',
+        'Expected delivery within 30–40 minutes ⏳',
+        'We’ll notify you when your rider arrives 🔔',
+        '',
+        ...orderDetails,
+        ...riderDetails,
+        `📍 Address: ${addressWithCity}`,
+        '',
+        ...(order.trackingUrl ? [`🔗 Live Track`, order.trackingUrl] : []),
+        '',
+        footer,
+      ].join('\n');
+    case 'Arrived':
+      return [
+        '📍 Rider Arrived',
+        'Your rider is waiting outside! 🛵',
+        'Please collect your parcel at the entrance 📦',
+        '',
+        ...orderDetails,
+        ...riderDetails,
+        `💸 Amount Payable: ${payable}`,
+        `📍 Address: ${addressWithCity}`,
+        '',
+        'Thank you for choosing us 💚',
+        '',
+        footer,
+      ].join('\n');
+    case 'Delivered': {
+      const deliveryTime = new Date(order.statusChangedAt || Date.now()).toLocaleTimeString('en-PK', {
+        timeZone: 'Asia/Karachi',
+        hour: 'numeric',
+        minute: '2-digit',
+      });
+      return [
+        '📦 Parcel Delivered Successfully!',
+        'Your parcel has been delivered successfully. Thank you for choosing us! 💚',
+        '',
+        `🔍 Order No: ${orderNumber}`,
+        `👤 Customer: ${customerName}`,
+        ...riderDetails,
+        `💸 Amount Paid: ${payable}`,
+        `📍 Delivered At: ${addressWithCity}`,
+        `🕐 Delivery Time: ${deliveryTime}`,
+        '',
+        'Thank you for choosing us 💚',
+        '',
+        footer,
+      ].join('\n');
+    }
+    default:
+      return [
+        `📦 Order Update: ${status}`,
+        ...orderDetails,
+        `📍 Address: ${addressWithCity}`,
+        '',
+        footer,
+      ].join('\n');
+  }
+};
+
+const sendStatusMessages = async (order, status, settings, previousResults = null) => {
+  const message = await formatOrderStatusMessage(order, status, settings);
+  const send = async (phone, previousResult) => {
+    if (previousResult?.sent) return previousResult;
     if (!/^\d{8,15}$/.test(String(phone || ''))) return { sent: false, error: 'Phone number is not configured.' };
     try {
       const result = await whatsappRouter.sendWhatsAppText('ftrack-dashboard', phone, message);
@@ -161,8 +290,68 @@ const sendStatusMessages = async (order, status, settings) => {
       return { sent: false, error: error.message || 'WhatsApp message could not be sent.' };
     }
   };
-  const [customer, admin] = await Promise.all([send(order.customerPhone), send(settings?.adminPhone)]);
+  const [customer, admin] = await Promise.all([
+    send(order.customerPhone, previousResults?.customer),
+    send(settings?.adminPhone, previousResults?.admin),
+  ]);
   return { customer, admin };
+};
+
+const scheduleOrderNotification = (order, status, changedAt, trackingUrl = '', previousResults = null) => {
+  const orderSnapshot = {
+    ...(typeof order.toObject === 'function' ? order.toObject() : order),
+    statusChangedAt: changedAt,
+    trackingUrl,
+  };
+  setImmediate(async () => {
+    let notifications;
+    try {
+      const settings = await WhatsAppOrderSettings.findOne({ organizationId: order.organizationId }).lean();
+      notifications = await sendStatusMessages(orderSnapshot, status, settings, previousResults);
+    } catch (error) {
+      const failure = error.message || 'WhatsApp notification could not be sent.';
+      notifications = {
+        customer: { sent: false, error: failure },
+        admin: { sent: false, error: failure },
+      };
+      console.error(`Pharma order WhatsApp notification failed for ${order.orderNumber}:`, error);
+    }
+    try {
+      await PharmaOrder.updateOne(
+        { _id: order._id, organizationId: order.organizationId },
+        { $set: { 'statusHistory.$[entry].notifications': notifications } },
+        { arrayFilters: [{ 'entry.changedAt': changedAt, 'entry.status': status }] }
+      );
+    } catch (error) {
+      console.error(`Could not save WhatsApp notification result for ${order.orderNumber}:`, error);
+    }
+  });
+};
+
+const retryOrderNotification = async (req, res) => {
+  if (!await ensurePharma(req, res)) return;
+  if (!isManager(req)) return res.status(403).json({ success: false, message: 'Employee management permission required.' });
+  if (!mongoose.isValidObjectId(req.params.orderId)) return res.status(400).json({ success: false, message: 'Invalid order ID.' });
+
+  const order = await PharmaOrder.findOne({ _id: req.params.orderId, organizationId: req.organizationId });
+  if (!order) return res.status(404).json({ success: false, message: 'Order not found.' });
+  if (!ORDER_STATUSES.includes(order.status)) return res.status(409).json({ success: false, message: 'This order status cannot be notified.' });
+
+  const historyEntry = [...order.statusHistory].reverse().find((entry) => entry.status === order.status);
+  if (!historyEntry) return res.status(409).json({ success: false, message: 'Order status history is missing.' });
+  const previousResults = historyEntry.notifications;
+  if (previousResults?.customer?.sent && previousResults?.admin?.sent) {
+    return res.status(409).json({ success: false, message: 'Both WhatsApp notifications were already sent.' });
+  }
+
+  const changedAt = historyEntry.changedAt;
+  await PharmaOrder.updateOne(
+    { _id: order._id, organizationId: req.organizationId },
+    { $set: { 'statusHistory.$[entry].notifications': { status: 'pending' } } },
+    { arrayFilters: [{ 'entry.changedAt': changedAt, 'entry.status': order.status }] }
+  );
+  scheduleOrderNotification(order, order.status, changedAt, buildTrackingUrl(order, order.trackingExpiresAt), previousResults);
+  return res.status(202).json({ success: true, notifications: { status: 'pending' }, message: 'WhatsApp notification retry started.' });
 };
 
 const trackingSignature = (orderId, expiresAtMs) => crypto
@@ -245,6 +434,39 @@ const updateStatus = async (req, res) => {
       message: 'This order status was already updated.',
     });
   }
+  if (status === 'On the Way') {
+    const publicTrackingBaseUrl = String(
+      process.env.PUBLIC_TRACKING_BASE_URL || process.env.CLIENT_URL || ''
+    ).trim();
+    if (!publicTrackingBaseUrl || !process.env.SECRET_JWT_KEY) {
+      return res.status(503).json({
+        success: false,
+        code: 'ORDER_TRACKING_LINK_NOT_CONFIGURED',
+        message: 'Customer tracking link is not configured on the server.',
+      });
+    }
+    const liveLocation = await EmployeeCurrentLocation.findOne({
+      organizationId: req.organizationId,
+      employeeId: current.assignedTo.employeeId,
+    }).select('location.coordinates timestamp trackingStatus sessionStatus').lean();
+    const locationAgeMs = liveLocation?.timestamp
+      ? Date.now() - new Date(liveLocation.timestamp).getTime()
+      : Number.POSITIVE_INFINITY;
+    const locationReady = Boolean(
+      liveLocation &&
+      locationAgeMs >= -30_000 && locationAgeMs <= 180_000 &&
+      liveLocation.trackingStatus === 'ACTIVE' &&
+      liveLocation.sessionStatus === 'active' &&
+      liveLocation.location?.coordinates?.length >= 2
+    );
+    if (!locationReady) {
+      return res.status(409).json({
+        success: false,
+        code: 'ORDER_TRACKING_NOT_READY',
+        message: 'Start Field Day and wait for a fresh GPS location before marking this order On the Way.',
+      });
+    }
+  }
   const targetIndex = ORDER_STATUSES.indexOf(status);
   const currentIndex = ORDER_STATUSES.indexOf(current.status);
   if (currentIndex < 0 || targetIndex !== currentIndex + 1) {
@@ -284,39 +506,10 @@ const updateStatus = async (req, res) => {
     return res.status(409).json({ success: false, message: 'Order changed on another device. Refresh and try again.' });
   }
 
-  const statusHistoryEntry = order.statusHistory[order.statusHistory.length - 1];
   const notificationsPending = { status: 'pending' };
-  statusHistoryEntry.notifications = notificationsPending;
   emitOrganizationEvent(req.organizationId, 'pharma-order-changed', { orderId: String(order._id), action: 'status-updated' });
   emitPharmaOrderSocketChange(req.organizationId, order._id, 'status-updated');
-
-  const orderForNotification = {
-    ...order.toObject(),
-    trackingUrl: buildTrackingUrl(order, trackingExpiresAt),
-  };
-  setImmediate(async () => {
-    let notifications;
-    try {
-      const settings = await WhatsAppOrderSettings.findOne({ organizationId: req.organizationId }).lean();
-      notifications = await sendStatusMessages(orderForNotification, status, settings);
-    } catch (error) {
-      const failure = error.message || 'WhatsApp notification could not be sent.';
-      notifications = {
-        customer: { sent: false, error: failure },
-        admin: { sent: false, error: failure },
-      };
-      console.error(`Pharma order WhatsApp notification failed for ${order.orderNumber}:`, error);
-    }
-    try {
-      await PharmaOrder.updateOne(
-        { _id: order._id, organizationId: req.organizationId },
-        { $set: { 'statusHistory.$[entry].notifications': notifications } },
-        { arrayFilters: [{ 'entry.changedAt': changedAt }] }
-      );
-    } catch (error) {
-      console.error(`Could not save WhatsApp notification result for ${order.orderNumber}:`, error);
-    }
-  });
+  scheduleOrderNotification(order, status, changedAt, buildTrackingUrl(order, trackingExpiresAt));
 
   return res.json({
     success: true,
@@ -326,4 +519,4 @@ const updateStatus = async (req, res) => {
   });
 };
 
-module.exports = { listOrders, getOrder, createOrder, claimOrder, updateStatus, ensurePharma, publicTracking };
+module.exports = { listOrders, getOrder, createOrder, claimOrder, updateStatus, retryOrderNotification, ensurePharma, publicTracking };

@@ -29,6 +29,7 @@ const pharmaOrderSchema = new mongoose.Schema({
   orderNumber: { type: String, required: true, trim: true },
   customerName: { type: String, required: true, trim: true, maxlength: 120 },
   customerPhone: { type: String, required: true, trim: true, maxlength: 15 },
+  customerCity: { type: String, default: '', trim: true, maxlength: 100 },
   customerAddress: { type: String, required: true, trim: true, maxlength: 500 },
   items: { type: [orderItemSchema], required: true, validate: (items) => items.length > 0 },
   totalAmount: { type: Number, default: null, min: 0 },
