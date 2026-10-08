@@ -88,6 +88,15 @@ const emitVerificationEvent = (eventName, payload) => {
   io.to(`org:${payload.organizationId}:dashboard`).emit(eventName, payload);
 };
 
+const emitPharmaOrderSocketChange = (organizationId, orderId, action) => {
+  if (!io || !organizationId) return;
+  io.to(`org:${organizationId}:dashboard`).emit('pharma:order-changed', {
+    orderId: String(orderId),
+    action,
+    timestamp: new Date().toISOString(),
+  });
+};
+
 module.exports = {
   initializeSocket,
   getIo,
@@ -97,4 +106,5 @@ module.exports = {
   disconnectEmployeeSockets,
   emitAppDataUpdate,
   emitVerificationEvent,
+  emitPharmaOrderSocketChange,
 };

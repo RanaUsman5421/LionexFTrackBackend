@@ -12,6 +12,9 @@ const verificationRoutes = require('./src/routes/verificationRoutes');
 const invitationRoutes = require('./src/routes/invitationRoutes');
 const pharmaRoutes = require('./src/routes/pharmaRoutes');
 const retailRoutes = require('./src/routes/retailRoutes');
+const whatsappRoutes = require('./src/whatsapp/whatsapp');
+const whatsappOrderRoutes = require('./src/routes/whatsappOrderRoutes');
+const publicOrderTrackingRoutes = require('./src/routes/publicOrderTrackingRoutes');
 const { initializeSocket } = require('./src/services/socketService');
 const { ensureLegacyOrganization } = require('./src/services/organizationBootstrapService');
 
@@ -35,14 +38,16 @@ app.use(express.urlencoded({ extended: true }));
 app.get('/', (req, res) => {
   res.status(200).json({
     success: true,
-    message: 'LionexFTrack backend is running.',
-    url: 'https://lionexftrackbackend-scpo.onrender.com'
+    message: 'FieldTrack backend is Running.',
+    url: 'https://ftrackapi.intellioera.com'
   });
 });
 
-app.get('/api/health', (req, res) => {
+app.get('/health', (req, res) => {
   res.status(200).json({ success: true, message: 'Server is running' });
 });
+
+
 
 app.use('/api/auth', authRoutes);
 app.use('/api/admin', adminRoutes);
@@ -52,7 +57,10 @@ app.use('/api/tracking', trackingRoutes);
 app.use('/api/verifications', verificationRoutes);
 app.use('/api/invitations', invitationRoutes);
 app.use('/api/pharma', pharmaRoutes);
+app.use('/api/public/order-tracking', publicOrderTrackingRoutes);
 app.use('/api/retail', retailRoutes);
+app.use(whatsappOrderRoutes);
+app.use(whatsappRoutes);
 
 const startServer = async () => {
   await connectDB();

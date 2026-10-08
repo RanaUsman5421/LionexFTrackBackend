@@ -1,4 +1,5 @@
 const clientsByEmployee = new Map();
+const clientsByOrganization = new Map();
 
 const writeEvent = (response, event, data) => {
   response.write(`event: ${event}\n`);
@@ -23,6 +24,10 @@ const subscribeToAppData = (req, res) => {
   const clients = clientsByEmployee.get(employeeId) || new Set();
   clients.add(res);
   clientsByEmployee.set(employeeId, clients);
+  const organizationId = String(req.organizationId || '');
+  const organizationClients = clientsByOrganization.get(organizationId) || new Set();
+  organizationClients.add(res);
+  clientsByOrganization.set(organizationId, organizationClients);
   writeEvent(res, 'connected', { employeeId, connectedAt: new Date().toISOString() });
 
   const heartbeat = setInterval(() => {
@@ -33,6 +38,8 @@ const subscribeToAppData = (req, res) => {
     clearInterval(heartbeat);
     clients.delete(res);
     if (!clients.size) clientsByEmployee.delete(employeeId);
+    organizationClients.delete(res);
+    if (!organizationClients.size) clientsByOrganization.delete(organizationId);
   });
 };
 
@@ -47,4 +54,14 @@ const emitAppDataChanged = (employeeId, version, source = 'backend') => {
   });
 };
 
-module.exports = { emitAppDataChanged, subscribeToAppData };
+const emitOrganizationEvent = (organizationId, event, data) => {
+  (clientsByOrganization.get(String(organizationId)) || []).forEach((response) => {
+    try {
+      writeEvent(response, event, data);
+    } catch (_) {
+      // The close handler removes disconnected clients.
+    }
+  });
+};
+
+module.exports = { emitAppDataChanged, emitOrganizationEvent, subscribeToAppData };

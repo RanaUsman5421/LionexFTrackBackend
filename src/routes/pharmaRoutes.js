@@ -1,9 +1,11 @@
 const express = require('express');
 const { protect } = require('../middleware/authMiddleware');
 const controller = require('../controllers/pharmaController');
+const pharmaOrderRoutes = require('./pharmaOrderRoutes');
 
 const router = express.Router();
 router.use(protect);
+router.use('/orders', pharmaOrderRoutes);
 router.get('/summary', controller.summary);
 router.get('/doctors', controller.listDoctors);
 router.post('/doctors', controller.createDoctor);
