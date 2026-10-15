@@ -1,3 +1,9 @@
 node_modules
 .env
 sessions/
+# Private database migration backups
+migration-backups/
+
+# Local APK storage / release metadata (mount persistent volume in production)
+fieldtrack/*
+!fieldtrack/.gitkeep

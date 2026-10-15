@@ -25,7 +25,7 @@ const path = require('path');
 const express = require('express');
 const QRCode = require('qrcode');
 const pino = require('pino');
-const { protect } = require('../middleware/authMiddleware');
+const { protect } = require('../middleware/auth/authMiddleware');
 
 const SESSIONS_DIR = path.join(__dirname, 'sessions');
 fs.mkdirSync(SESSIONS_DIR, { recursive: true });
@@ -38,7 +38,13 @@ const log = (...args) => console.log(`[WA ${new Date().toLocaleTimeString()}]`, 
 const profiles = new Map();
 
 // ── Connect ──────────────────────────────────────────────────────
-async function startProfile(profileId) {
+const profileStarts=new Map();
+function startProfile(profileId) {
+ if(profileStarts.has(profileId))return profileStarts.get(profileId);
+ const task=startProfileInternal(profileId).finally(()=>profileStarts.delete(profileId));
+ profileStarts.set(profileId,task);return task;
+}
+async function startProfileInternal(profileId) {
   // Baileys v7 is ESM-only, so load it dynamically from this CommonJS file.
   const {
     default: makeWASocket,
@@ -66,9 +72,15 @@ async function startProfile(profileId) {
   profile.sock = sock;
 
   // Session (keys/creds) har tabdeeli par disk par save
-  sock.ev.on('creds.update', saveCreds);
+  sock.ev.on('creds.update', () => {
+    profile.credsSave = (profile.credsSave || Promise.resolve()).catch(() => {}).then(() => {
+      if (profile.sock === sock && !profile.disconnectRequested) return saveCreds();
+    });
+    profile.credsSave.catch(error => log(profileId, 'session save failed:', error.message));
+  });
 
   sock.ev.on('connection.update', async ({ connection, lastDisconnect, qr }) => {
+    if (profile.sock !== sock) return;
     if (qr) {
       profile.qr = await QRCode.toDataURL(qr);
       profile.status = 'qr';
@@ -90,14 +102,15 @@ async function startProfile(profileId) {
         profile.qr = null;
         profile.phone = null;
         profile.sock = null;
-        profile.disconnectRequested = false;
+        profile.disconnectRequested = true;
         fs.rmSync(authDir, { recursive: true, force: true });
         log(profileId, 'logged out — session deleted');
       } else {
         // Baaqi sab (QR scan ke baad restart, internet gaya waghera) → dobara connect
         profile.status = 'reconnecting';
+        profile.sock = null;
         log(profileId, `connection closed (${code}) — reconnecting`);
-        setTimeout(() => startProfile(profileId).catch((e) => log(profileId, 'reconnect failed:', e.message)), 3000);
+        setTimeout(() => { if (!profile.disconnectRequested && profiles.get(profileId) === profile && !profile.sock) startProfile(profileId).catch((e) => log(profileId, 'reconnect failed:', e.message)); }, 3000);
       }
     }
   });
@@ -128,6 +141,10 @@ const publicProfile = (p) => ({ profileId: p.profileId, status: p.status, phone:
 // ── Routes ───────────────────────────────────────────────────────
 const router = express.Router();
 router.use(protect);
+router.use(async (req,res,next)=>{
+ const org=await require('../models/organization/Organization').findById(req.organizationId).select('category').lean();
+ if(org?.category==='pharmaceutical')return res.status(403).json({message:'Manage WhatsApp through the pharmaceutical Settings profiles.'});
+ if(String(req.body?.profileId||'').startsWith('pharma_'))return res.status(403).json({message:'Use the organization-scoped WhatsApp profile endpoints.'});next();});
 
 // Naya profile banao (ya purane ka QR dobara lo) → QR
 router.post('/api/wa/qr', async (req, res) => {
@@ -156,7 +173,7 @@ router.post('/api/wa/qr', async (req, res) => {
 
 // Saare profiles
 router.get('/api/wa/profiles', (req, res) => {
-  res.json([...profiles.values()].map(publicProfile));
+  res.json([...profiles.values()].filter(p=>!p.profileId.startsWith('pharma_')).map(publicProfile));
 });
 
 // ── Server start par purane sessions dobara connect ──────────────
@@ -239,10 +256,35 @@ async function restoreSessions() {
   }
   if (ids.length) log(`restored ${ids.length} session(s)`);
 }
-restoreSessions();
+if (!process.env.NODE_TEST_CONTEXT) restoreSessions();
+
+const managedStarts=new Map();
+const getProfileState=profileId=>{const p=profiles.get(profileId);return p?publicProfile(p):{profileId,status:'logged_out',phone:null};};
+async function connectManagedProfile(profileId){
+ if(!/^pharma_[a-f0-9]{36}$/.test(profileId))throw new Error('Invalid managed profile.');
+ if(managedStarts.has(profileId))return managedStarts.get(profileId);
+ const task=(async()=>{let p=profiles.get(profileId);if(p?.status==='connected')return {...publicProfile(p),qr:null};if(!p?.sock)p=await startProfile(profileId);await waitForQrOrConnect(p);return {...publicProfile(p),qr:p.qr};})().finally(()=>managedStarts.delete(profileId));
+ managedStarts.set(profileId,task);return task;
+}
+async function disconnectManagedProfile(profileId){
+ if(!/^pharma_[a-f0-9]{36}$/.test(profileId))throw new Error('Invalid managed profile.');
+ const starting=managedStarts.get(profileId)||profileStarts.get(profileId);if(starting)await starting;
+ const p=profiles.get(profileId);
+ if(p){p.disconnectRequested=true;const sock=p.sock;p.sock=null;
+  try{if(sock&&p.status==='connected')await sock.logout();else sock?.end(new Error('Disconnected by administrator'));}catch(e){p.sock=sock;p.disconnectRequested=false;throw e;}
+  await p.credsSave?.catch(()=>{});
+  p.status='logged_out';p.qr=null;p.phone=null;
+ }
+ const target=path.resolve(SESSIONS_DIR,profileId);
+ if(path.dirname(target)!==path.resolve(SESSIONS_DIR))throw new Error('Invalid session directory.');
+ fs.rmSync(target,{recursive:true,force:true});
+}
 
 module.exports = router;
 module.exports.sendWhatsAppText = sendWhatsAppText;
+module.exports.getProfileState = getProfileState;
+module.exports.connectManagedProfile = connectManagedProfile;
+module.exports.disconnectManagedProfile = disconnectManagedProfile;
 
 // `node whatsapp.js` se seedha chalao to apna chhota server bhi start ho jata hai
 if (require.main === module) {

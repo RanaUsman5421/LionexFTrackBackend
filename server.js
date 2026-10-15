@@ -2,26 +2,26 @@ const express = require('express');
 const http = require('http');
 const cors = require('cors');
 const dotenv = require('dotenv');
-const connectDB = require('./src/config/db');
-const authRoutes = require('./src/routes/authRoutes');
-const adminRoutes = require('./src/routes/adminRoutes');
-const appDataRoutes = require('./src/routes/appDataRoutes');
-const locationRoutes = require('./src/routes/locationRoutes');
-const trackingRoutes = require('./src/routes/trackingRoutes');
-const verificationRoutes = require('./src/routes/verificationRoutes');
-const invitationRoutes = require('./src/routes/invitationRoutes');
-const pharmaRoutes = require('./src/routes/pharmaRoutes');
-const retailRoutes = require('./src/routes/retailRoutes');
+const connectDB = require('./src/config/database/db');
+const authRoutes = require('./src/routes/auth/authRoutes');
+const adminRoutes = require('./src/routes/admin/adminRoutes');
+const appDataRoutes = require('./src/routes/sync/appDataRoutes');
+const locationRoutes = require('./src/routes/tracking/locationRoutes');
+const trackingRoutes = require('./src/routes/tracking/trackingRoutes');
+const verificationRoutes = require('./src/routes/tracking/verificationRoutes');
+const invitationRoutes = require('./src/routes/auth/invitationRoutes');
+const pharmaRoutes = require('./src/routes/pharmaceutical/pharmaRoutes');
+const retailRoutes = require('./src/routes/retail/retailRoutes');
 const whatsappRoutes = require('./src/whatsapp/whatsapp');
-const whatsappOrderRoutes = require('./src/routes/whatsappOrderRoutes');
-const publicOrderTrackingRoutes = require('./src/routes/publicOrderTrackingRoutes');
-const { initializeSocket } = require('./src/services/socketService');
-const { ensureLegacyOrganization } = require('./src/services/organizationBootstrapService');
+const whatsappOrderRoutes = require('./src/routes/whatsapp/whatsappOrderRoutes');
+const publicOrderTrackingRoutes = require('./src/routes/public/publicOrderTrackingRoutes');
+const { initializeSocket } = require('./src/services/realtime/socketService');
+const { ensureLegacyOrganization } = require('./src/services/organization/organizationBootstrapService');
 
 dotenv.config();
 
 const app = express();
-const PORT = process.env.PORT || 5000;
+const PORT = process.env.PORT || 3002;
 const server = http.createServer(app);
 
 const corsOptions = process.env.CLIENT_URL
@@ -49,6 +49,7 @@ app.get('/health', (req, res) => {
 
 
 
+app.use('/api', require('./src/routes/updates/appReleaseRoutes'));
 app.use('/api/auth', authRoutes);
 app.use('/api/admin', adminRoutes);
 app.use('/api/app-data', appDataRoutes);
@@ -65,12 +66,15 @@ app.use(whatsappRoutes);
 const startServer = async () => {
   await connectDB();
   await ensureLegacyOrganization();
+  // Complete legacy migration before accepting any app/dashboard writes.
+  await require('./src/services/sync/snapshotMigrationService').migrateAll();
 
   initializeSocket(server);
+  require('./src/services/sync/recordSyncMaintenance').startMaintenance();
 
   server.listen(PORT, () => {
     console.log(`Server running on port ${PORT}`);
   });
 };
 
-startServer();
+startServer().catch(error => { console.error('Startup failed:', error.message); process.exitCode = 1; });

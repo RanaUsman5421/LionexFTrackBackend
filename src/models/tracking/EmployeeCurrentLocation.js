@@ -1,0 +1,49 @@
+const mongoose = require('mongoose');
+
+const employeeCurrentLocationSchema = new mongoose.Schema(
+  {
+    organizationId: { type: mongoose.Schema.Types.ObjectId, ref: 'Organization', default: null, index: true },
+    employeeId: {
+      type: String,
+      required: true,
+      unique: true,
+      index: true,
+      trim: true,
+    },
+    location: {
+      type: {
+        type: String,
+        enum: ['Point'],
+        default: 'Point',
+      },
+      coordinates: {
+        type: [Number],
+        required: true,
+      },
+    },
+    accuracy: { type: Number, default: null },
+    speed: { type: Number, default: null },
+    heading: { type: Number, default: null },
+    altitude: { type: Number, default: null },
+    batteryPercentage: { type: Number, default: null },
+    timestamp: { type: Date, required: true },
+    locationCapturedAt: { type: Date, default: null },
+    lastSeenAt: { type: Date, default: null },
+    trackingStatus: {
+      type: String,
+      enum: ['ACTIVE', 'STALE', 'OFFLINE', 'GPS_DISABLED', 'TRACKING_STOPPED', 'VERIFICATION_REQUIRED'],
+      default: 'ACTIVE',
+    },
+    sessionStatus: {
+      type: String,
+      enum: ['active', 'stopped'],
+      default: 'active',
+    },
+  },
+  { timestamps: true }
+);
+
+employeeCurrentLocationSchema.index({ location: '2dsphere' });
+employeeCurrentLocationSchema.index({ organizationId: 1, updatedAt: -1 });
+
+module.exports = mongoose.model('EmployeeCurrentLocation', employeeCurrentLocationSchema);
